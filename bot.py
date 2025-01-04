@@ -119,6 +119,7 @@ async def configure_webhook(application):
     except Exception as e:
         print(f"Webhook-Konfigurationsfehler: {e}")
 
+
 def main():
     # Create the application
     application = Application.builder().token(BOT_TOKEN).build()
@@ -137,9 +138,13 @@ def main():
             url_path=BOT_TOKEN,  # Webhook path
         )
 
-    # Get the event loop and run the application
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(start_application())
+    # Use asyncio's default event loop policy
+    try:
+        asyncio.run(start_application())
+    except RuntimeError:
+        # Handle situations where an event loop is already running
+        loop = asyncio.get_running_loop()
+        loop.create_task(start_application())
 
 if __name__ == "__main__":
     main()
