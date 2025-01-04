@@ -5,7 +5,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 # Konfigurationsparameter
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-WEBURL = os.environ.get("WEBURL")  # Neue URL für Fly.io
+WEBURL = os.environ.get("WEBURL")  
 FTP_HOST = os.environ.get("FTP_HOST")
 FTP_USER = os.environ.get("FTP_USER")
 FTP_PASS = os.environ.get("FTP_PASS")
@@ -104,6 +104,20 @@ async def text_handler(update: Update, context):
         # Benutzerdaten entfernen
         del user_data[chat_id]
 
+# Webhook automatisch konfigurieren
+async def configure_webhook(application):
+    bot = application.bot
+    webhook_url = f"{WEBURL}/{BOT_TOKEN}"
+    try:
+        # Webhook konfigurieren
+        success = await bot.set_webhook(webhook_url)
+        if success:
+            print(f"Webhook erfolgreich gesetzt: {webhook_url}")
+        else:
+            print("Fehler beim Setzen des Webhooks.")
+    except Exception as e:
+        print(f"Webhook-Konfigurationsfehler: {e}")
+
 # Hauptfunktion
 def main():
     # Anwendung erstellen
@@ -114,14 +128,17 @@ def main():
     application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    # Webhook setzen und starten
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.environ.get("PORT", 8443)),
-        url_path=BOT_TOKEN,
-        webhook_url=f"{WEBURL}/{BOT_TOKEN}",  # Änderung hier
-    )
+    # Webhook konfigurieren und starten
+    async def start_application():
+        await configure_webhook(application)
+        await application.run_webhook(
+            listen="0.0.0.0",
+            port=int(os.environ.get("PORT", 8443)),
+            url_path=BOT_TOKEN,
+        )
+
+    import asyncio
+    asyncio.run(start_application())
 
 if __name__ == "__main__":
     main()
-
