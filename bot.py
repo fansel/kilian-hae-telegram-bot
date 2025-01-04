@@ -2,6 +2,7 @@ import os
 import aioftp
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
+import asyncio
 
 # Konfigurationsparameter
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -118,27 +119,27 @@ async def configure_webhook(application):
     except Exception as e:
         print(f"Webhook-Konfigurationsfehler: {e}")
 
-# Hauptfunktion
 def main():
-    # Anwendung erstellen
+    # Create the application
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # Handler hinzufügen
+    # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    # Webhook konfigurieren und starten
+    # Webhook configuration and server startup
     async def start_application():
         await configure_webhook(application)
         await application.run_webhook(
-            listen="0.0.0.0",
-            port=int(os.environ.get("PORT", 8443)),
-            url_path=BOT_TOKEN,
+            listen="0.0.0.0",  # Bind to all available IPs
+            port=int(os.environ.get("PORT", 8443)),  # Default or environment-provided port
+            url_path=BOT_TOKEN,  # Webhook path
         )
 
-    import asyncio
-    asyncio.run(start_application())
+    # Get the event loop and run the application
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(start_application())
 
 if __name__ == "__main__":
     main()
