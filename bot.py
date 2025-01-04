@@ -1,15 +1,15 @@
-import os
-import aioftp
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, filters
 import asyncio
+from fastapi import FastAPI
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
+import aioftp
+import os
 
 # Konfigurationsparameter
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-WEBURL = os.environ.get("WEBURL")  
-FTP_HOST = os.environ.get("FTP_HOST")
-FTP_USER = os.environ.get("FTP_USER")
-FTP_PASS = os.environ.get("FTP_PASS")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+WEBURL = os.getenv("WEBURL")
+FTP_HOST = os.getenv("FTP_HOST")
+FTP_USER = os.getenv("FTP_USER")
+FTP_PASS = os.getenv("FTP_PASS")
 FTP_UPLOAD_DIR = "/www/gallery"
 LOCAL_DOWNLOAD_PATH = "./downloads/"
 os.makedirs(LOCAL_DOWNLOAD_PATH, exist_ok=True)
@@ -17,7 +17,14 @@ os.makedirs(LOCAL_DOWNLOAD_PATH, exist_ok=True)
 # Temporäre Speicherung von Benutzerdaten
 user_data = {}
 
-# Hilfsfunktion: Datei auf FTP hochladen
+# FastAPI-App für Statusseite
+app = FastAPI()
+
+@app.get("/")
+async def index():
+    return {"status": "✅ Bot läuft!"}
+
+# Telegram-Bot-Funktionen
 async def upload_to_ftp(local_path, file_name):
     try:
         client = aioftp.Client()
@@ -31,120 +38,76 @@ async def upload_to_ftp(local_path, file_name):
         print(f"FTP-Upload-Fehler: {e}")
         return False
 
-# Start-Befehl
-async def start(update: Update, context):
-    await update.message.reply_text(
-        "Hallo! Sende mir ein Bild, um es hochzuladen. Anschließend kannst du Titel, Material, Datum und Maße festlegen."
-    )
+async def start(update, context):
+    await update.message.reply_text("Hallo! Sende mir ein Bild, um es hochzuladen.")
 
-# Bild hochladen
-async def photo_handler(update: Update, context):
+async def photo_handler(update, context):
     chat_id = update.message.chat.id
     status = await update.message.reply_text("📥 Herunterladen des Bildes...")
-
-    # Bild herunterladen
     file = await update.message.photo[-1].get_file()
     local_path = os.path.join(LOCAL_DOWNLOAD_PATH, file.file_id + ".jpg")
     await file.download_to_drive(local_path)
-
-    user_data[chat_id] = {"file_path": local_path, "file_name": file.file_id + ".jpg", "step": "title"}
+    user_data[chat_id] = {"file_path": local_path, "step": "title"}
     await status.edit_text("✅ Bild hochgeladen! Bitte sende jetzt den Titel des Bildes.")
 
-# Benutzerinformationen abfragen und Datei umbenennen
-async def text_handler(update: Update, context):
+async def text_handler(update, context):
     chat_id = update.message.chat.id
     if chat_id not in user_data:
-        await update.message.reply_text("Sende zuerst ein Bild, um fortzufahren.")
+        await update.message.reply_text("Bitte sende zuerst ein Bild.")
         return
 
     user_info = user_data[chat_id]
     step = user_info.get("step")
-    local_path = user_info.get("file_path")
-
     if step == "title":
-        user_info["title"] = update.message.text.replace(" ", "_")
+        user_info["title"] = update.message.text
         user_info["step"] = "material"
-        await update.message.reply_text("Titel gespeichert. Bitte sende das Material des Bildes.")
+        await update.message.reply_text("Titel gespeichert. Sende das Material.")
     elif step == "material":
-        user_info["material"] = update.message.text.replace(" ", "_")
+        user_info["material"] = update.message.text
         user_info["step"] = "date"
-        await update.message.reply_text("Material gespeichert. Bitte sende das Datum im Format 'Monat Jahr'.")
+        await update.message.reply_text("Material gespeichert. Sende das Datum (Monat Jahr).")
     elif step == "date":
-        try:
-            month, year = update.message.text.split()
-            user_info["month"] = month
-            user_info["year"] = year
-            user_info["step"] = "dimensions"
-            await update.message.reply_text("Datum gespeichert. Bitte sende die Maße im Format 'Breite x Höhe'.")
-        except ValueError:
-            await update.message.reply_text("Ungültiges Format. Bitte sende das Datum im Format 'Monat Jahr'.")
+        user_info["date"] = update.message.text
+        user_info["step"] = "dimensions"
+        await update.message.reply_text("Datum gespeichert. Sende die Maße (Breite x Höhe).")
     elif step == "dimensions":
-        user_info["dimensions"] = update.message.text.replace(" ", "")
-        user_info["step"] = None
-
-        # Neuer Dateiname erstellen
-        new_name = f"{user_info['title']}_{user_info['material']}_{user_info['month']}_{user_info['year']}_{user_info['dimensions']}.jpg"
-        new_local_path = os.path.join(LOCAL_DOWNLOAD_PATH, new_name)
-
-        # Datei lokal umbenennen
-        os.rename(local_path, new_local_path)
-
-        # Datei auf FTP hochladen
-        success = await upload_to_ftp(new_local_path, new_name)
-
+        dimensions = update.message.text.replace(" ", "")
+        user_info["dimensions"] = dimensions
+        local_path = user_info["file_path"]
+        new_name = f"{user_info['title']}_{user_info['material']}_{user_info['date']}_{dimensions}.jpg"
+        new_path = os.path.join(LOCAL_DOWNLOAD_PATH, new_name)
+        os.rename(local_path, new_path)
+        success = await upload_to_ftp(new_path, new_name)
         if success:
-            await update.message.reply_text(f"✅ Datei erfolgreich hochgeladen: {new_name}")
+            await update.message.reply_text(f"✅ Hochgeladen: {new_name}")
         else:
-            await update.message.reply_text("❌ Fehler beim Hochladen der Datei.")
-
-        # Lokale Datei löschen
-        if os.path.exists(new_local_path):
-            os.remove(new_local_path)
-            print(f"Datei lokal gelöscht: {new_local_path}")
-
-        # Benutzerdaten entfernen
+            await update.message.reply_text("❌ Fehler beim Hochladen.")
+        if os.path.exists(new_path):
+            os.remove(new_path)
         del user_data[chat_id]
 
-# Webhook automatisch konfigurieren
 async def configure_webhook(application):
-    bot = application.bot
     webhook_url = f"{WEBURL}/{BOT_TOKEN}"
-    try:
-        # Webhook konfigurieren
-        success = await bot.set_webhook(webhook_url)
-        if success:
-            print(f"Webhook erfolgreich gesetzt: {webhook_url}")
-        else:
-            print("Fehler beim Setzen des Webhooks.")
-    except Exception as e:
-        print(f"Webhook-Konfigurationsfehler: {e}")
+    success = await application.bot.set_webhook(webhook_url)
+    if success:
+        print(f"Webhook gesetzt: {webhook_url}")
+    else:
+        print("Fehler beim Setzen des Webhooks.")
 
-
-def main():
-    # Create the application
+async def start_bot():
     application = Application.builder().token(BOT_TOKEN).build()
-
-    # Add handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-
-    # Webhook configuration and server startup
-    async def start_application():
-        await configure_webhook(application)
-        await application.run_webhook(
-            listen="0.0.0.0",  # Bind to all available IPs
-            port=int(os.environ.get("PORT", 8443)),  # Default or environment-provided port
-            url_path=BOT_TOKEN,  # Webhook path
-        )
-
-    # Use asyncio's default event loop policy
-    try:
-        asyncio.run(start_application())
-    except RuntimeError:
-        # Handle situations where an event loop is already running
-        loop = asyncio.get_running_loop()
-        loop.create_task(start_application())
+    await configure_webhook(application)
+    await application.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.getenv("PORT", 8443)),
+        url_path=BOT_TOKEN,
+    )
 
 if __name__ == "__main__":
-    main()
+    loop = asyncio.get_event_loop()
+    loop.create_task(start_bot())
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=5000)
