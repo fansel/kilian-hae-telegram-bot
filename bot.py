@@ -92,7 +92,7 @@ async def debug_command(update: Update, context):
     global debug_mode, debug_chat_id
     debug_mode = not debug_mode
     debug_chat_id = update.message.chat.id if debug_mode else None
-    status = "aktiviert" wenn debug_mode sonst "deaktiviert"
+    status = "aktiviert" if debug_mode else "deaktiviert"
     await update.message.reply_text(f"Debug-Modus {status}.")
 
 # Bild hochladen
