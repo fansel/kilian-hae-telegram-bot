@@ -93,8 +93,7 @@ async def show_image_options(update: Update, context):
         [InlineKeyboardButton("5. Verfügbarkeit ändern", callback_data="edit_availability")],
         [InlineKeyboardButton("6. Startbild festlegen", callback_data="set_start")],
         [InlineKeyboardButton("7. Löschen", callback_data="delete")],
-        [InlineKeyboardButton("8. Änderungen abschließen", callback_data="confirm_changes")],
-        [InlineKeyboardButton("9. Änderungen verwerfen", callback_data="discard_changes")]
+        [InlineKeyboardButton("8. Fertig", callback_data="discard_changes")]
     ]
 
     await query.edit_message_text(
@@ -239,8 +238,29 @@ async def confirm_availability(update: Update, context):
     else:
         await query.edit_message_text("❌ Fehler beim Ändern der Verfügbarkeit.")
 
-async def rename_ftp_file(old_name, new_name):
+async def change_title_on_ftp(update: Update, context):
+    chat_id = update.message.chat.id
+    file_data = user_data.get(chat_id)
+
+    if not file_data:
+        await update.message.reply_text("❌ Kein Bild ausgewählt.")
+        return
+
+    # Alter Name und neuer Titel
+    old_name = file_data["file_name"]
+    new_title = file_data.get("title", "").replace(" ", "_")  # Leerzeichen durch Unterstriche ersetzen
+    parts = old_name.split("_")
+
+    if len(parts) < 3:
+        await update.message.reply_text("❌ Fehler: Dateiname hat ein unerwartetes Format.")
+        return
+
+    # Neuen Dateinamen erstellen
+    parts[0] = new_title  # Ersetze den ersten Teil mit dem neuen Titel
+    new_name = "_".join(parts)
+
     try:
+        # Verbindung zum FTP-Server herstellen und Datei umbenennen
         client = aioftp.Client()
         await client.connect(FTP_HOST)
         await client.login(FTP_USER, FTP_PASS)
@@ -249,11 +269,96 @@ async def rename_ftp_file(old_name, new_name):
             os.path.join(FTP_UPLOAD_DIR, new_name)
         )
         await client.quit()
-        return True
-    except Exception as e:
-        print(f"Fehler beim Umbenennen der Datei: {e}")
-        return False
 
+        # Aktualisiere den Dateinamen
+        file_data["file_name"] = new_name
+        await update.message.reply_text(f"✅ Titel erfolgreich geändert zu: {new_title.replace('_', ' ')}")
+
+    except Exception as e:
+        print(f"Fehler beim Ändern des Titels auf dem FTP-Server: {e}")
+        await update.message.reply_text("❌ Fehler beim Ändern des Titels auf dem Server.")
+async def change_date_on_ftp(update: Update, context):
+    chat_id = update.message.chat.id
+    file_data = user_data.get(chat_id)
+
+    if not file_data:
+        await update.message.reply_text("❌ Kein Bild ausgewählt.")
+        return
+
+    # Alter Name und neues Datum
+    old_name = file_data["file_name"]
+    new_date = file_data.get("date", "").replace(" ", "-")  # Leerzeichen durch Bindestriche ersetzen
+    parts = old_name.split("_")
+
+    if len(parts) < 3:
+        await update.message.reply_text("❌ Fehler: Dateiname hat ein unerwartetes Format.")
+        return
+
+    # Neuen Dateinamen erstellen
+    parts[2] = new_date  # Ersetze den dritten Teil mit dem neuen Datum
+    new_name = "_".join(parts)
+
+    try:
+        # Verbindung zum FTP-Server herstellen und Datei umbenennen
+        client = aioftp.Client()
+        await client.connect(FTP_HOST)
+        await client.login(FTP_USER, FTP_PASS)
+        await client.rename(
+            os.path.join(FTP_UPLOAD_DIR, old_name),
+            os.path.join(FTP_UPLOAD_DIR, new_name)
+        )
+        await client.quit()
+
+        # Aktualisiere den Dateinamen
+        file_data["file_name"] = new_name
+        await update.message.reply_text(f"✅ Datum erfolgreich geändert zu: {new_date}")
+
+    except Exception as e:
+        print(f"Fehler beim Ändern des Datums auf dem FTP-Server: {e}")
+        await update.message.reply_text("❌ Fehler beim Ändern des Datums auf dem Server.")
+async def change_dimensions_on_ftp(update: Update, context):
+    chat_id = update.message.chat.id
+    file_data = user_data.get(chat_id)
+
+    if not file_data:
+        await update.message.reply_text("❌ Kein Bild ausgewählt.")
+        return
+
+    # Alter Name und neue Maße
+    old_name = file_data["file_name"]
+    new_dimensions = file_data.get("dimensions", "default_dimensions").replace(" ", "")  # Leerzeichen entfernen
+    parts = old_name.split("_")
+
+    if len(parts) < 4:
+        await update.message.reply_text("❌ Fehler: Dateiname hat ein unerwartetes Format.")
+        return
+
+    # Neuen Dateinamen erstellen
+    parts[3] = new_dimensions  # Ersetze den vierten Teil mit den neuen Maßen
+    new_name = "_".join(parts)
+
+    try:
+        # Verbindung zum FTP-Server herstellen und Datei umbenennen
+        client = aioftp.Client()
+        await client.connect(FTP_HOST)
+        await client.login(FTP_USER, FTP_PASS)
+        await client.rename(
+            os.path.join(FTP_UPLOAD_DIR, old_name),
+            os.path.join(FTP_UPLOAD_DIR, new_name)
+        )
+        await client.quit()
+
+        # Aktualisiere den Dateinamen und die Maße in den Benutzerdaten
+        file_data["file_name"] = new_name
+        file_data["dimensions"] = new_dimensions
+
+        # Erfolgsmeldung an den Benutzer
+        await update.message.reply_text(f"✅ Maße erfolgreich geändert zu: {new_dimensions}")
+
+    except Exception as e:
+        print(f"Fehler beim Ändern der Maße auf dem FTP-Server: {e}")
+        await update.message.reply_text("❌ Fehler beim Ändern der Maße auf dem Server.")
+        
 async def cancel_availability(update: Update, context):
     query = update.callback_query
     await query.answer()
@@ -261,6 +366,48 @@ async def cancel_availability(update: Update, context):
     # Kontextmenü erneut anzeigen
     await show_image_options(update, context)
 
+async def set_start_image(update: Update, context):
+    chat_id = update.message.chat.id
+    file_data = user_data.get(chat_id)
+
+    if not file_data:
+        await update.message.reply_text("❌ Kein Bild ausgewählt.")
+        return
+
+    old_name = file_data["file_name"]
+    base_name, ext = os.path.splitext(old_name)
+
+    # Prüfen, ob `_S` bereits vorhanden ist
+    if "_S" in base_name:
+        await update.message.reply_text("✅ Dieses Bild ist bereits als Startbild festgelegt.")
+        return
+
+    # Umgang mit `_x` im Dateinamen
+    if "_x" in base_name:
+        # Füge `_S` direkt vor `_x` ein
+        new_name = base_name.replace("_x", "_S_x") + ext
+    else:
+        # Hänge `_S` an, wenn `_x` nicht existiert
+        new_name = base_name + "_S" + ext
+
+    try:
+        # Verbindung zum FTP-Server herstellen und Datei umbenennen
+        client = aioftp.Client()
+        await client.connect(FTP_HOST)
+        await client.login(FTP_USER, FTP_PASS)
+        await client.rename(
+            os.path.join(FTP_UPLOAD_DIR, old_name),
+            os.path.join(FTP_UPLOAD_DIR, new_name)
+        )
+        await client.quit()
+
+        # Aktualisiere den Dateinamen in den Benutzerdaten
+        file_data["file_name"] = new_name
+        await update.message.reply_text(f"✅ Startbild erfolgreich festgelegt: {new_name}")
+
+    except Exception as e:
+        print(f"Fehler beim Festlegen des Startbildes auf dem FTP-Server: {e}")
+        await update.message.reply_text("❌ Fehler beim Festlegen des Startbildes auf dem Server.")
 
 # Startbild festlegen
 async def set_start_image(update: Update, context):
