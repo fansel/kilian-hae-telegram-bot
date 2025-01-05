@@ -121,8 +121,11 @@ if __name__ == "__main__":
 
         # Webhook konfigurieren
         webhook_url = f"{WEBURL}/{BOT_TOKEN}"
-        await application.bot.set_webhook(webhook_url)
-        logger.info(f"Webhook erfolgreich gesetzt: {webhook_url}")
+        success = await application.bot.set_webhook(webhook_url)
+        if success:
+            logger.info(f"Webhook erfolgreich gesetzt: {webhook_url}")
+        else:
+            logger.error("Fehler beim Setzen des Webhooks.")
 
         # Webhook-Server starten
         await application.run_webhook(
@@ -131,12 +134,21 @@ if __name__ == "__main__":
             url_path=BOT_TOKEN,
         )
 
-    # Existierenden Event-Loop verwenden
+    async def keep_running():
+        """Hält den Event-Loop aktiv."""
+        stop_event = asyncio.Event()
+        try:
+            await stop_event.wait()  # Wartet auf ein Signal, um zu beenden
+        except KeyboardInterrupt:
+            logger.info("Beenden erkannt. Stoppe Event-Loop.")
+
     try:
-        asyncio.run(main())
-    except RuntimeError as e:
-        if "This event loop is already running" in str(e):
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
             logger.warning("Event-Loop läuft bereits. Starte main() als Task.")
-            asyncio.create_task(main())
+            loop.create_task(main())
+            loop.run_until_complete(keep_running())
         else:
-            raise
+            asyncio.run(main())
+    except Exception as e:
+        logger.error(f"Unbehandelter Fehler: {e}")
