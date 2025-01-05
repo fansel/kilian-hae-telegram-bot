@@ -238,6 +238,30 @@ async def confirm_availability(update: Update, context):
     else:
         await query.edit_message_text("❌ Fehler beim Ändern der Verfügbarkeit.")
 
+    async def rename_ftp_file(old_name, new_name):
+        """
+        Benennt eine Datei auf dem FTP-Server um.
+
+        :param old_name: Aktueller Name der Datei auf dem Server (inklusive Pfad).
+        :param new_name: Neuer Name der Datei auf dem Server (inklusive Pfad).
+        :return: True, wenn das Umbenennen erfolgreich war, False bei Fehlern.
+        """
+        try:
+            client = aioftp.Client()
+            # Verbindung herstellen
+            await client.connect(FTP_HOST)
+            await client.login(FTP_USER, FTP_PASS)
+            
+            # Datei umbenennen
+            await client.rename(old_name, new_name)
+            
+            # Verbindung beenden
+            await client.quit()
+            return True
+        except Exception as e:
+            print(f"Fehler beim Umbenennen der Datei auf dem FTP-Server: {e}")
+            return False
+
 async def change_title_on_ftp(update: Update, context):
     chat_id = update.message.chat.id
     file_data = user_data.get(chat_id)
