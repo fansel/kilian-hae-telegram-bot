@@ -35,12 +35,22 @@ async def list_ftp_files():
         client = aioftp.Client()
         await client.connect(FTP_HOST)
         await client.login(FTP_USER, FTP_PASS)
-        files = [file.name async for file in client.list(FTP_UPLOAD_DIR)]
+        
+        # Ändere das Verzeichnis auf den Zielpfad
+        await client.change_directory(FTP_UPLOAD_DIR)
+        
+        # Liste der Dateien abrufen
+        files = []
+        async for path, info in client.list(FTP_UPLOAD_DIR):
+            if info["type"] == "file":  # Nur Dateien, keine Verzeichnisse
+                files.append(path.name)
+        
         await client.quit()
         return files
     except Exception as e:
         print(f"Fehler beim Abrufen der Dateien: {e}")
         return []
+
 
 # Start-Befehl
 async def start(update: Update, context):
