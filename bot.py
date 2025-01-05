@@ -89,9 +89,12 @@ async def show_image_options(update: Update, context):
         [InlineKeyboardButton("1. Titel ändern", callback_data="edit_title")],
         [InlineKeyboardButton("2. Datum ändern", callback_data="edit_date")],
         [InlineKeyboardButton("3. Maße ändern", callback_data="edit_dimensions")],
-        [InlineKeyboardButton("4. Verfügbarkeit ändern", callback_data="edit_availability")],
-        [InlineKeyboardButton("5. Startbild festlegen", callback_data="set_start")],
-        [InlineKeyboardButton("6. Löschen", callback_data="delete")]
+        [InlineKeyboardButton("4. Material ändern", callback_data="edit_material")],
+        [InlineKeyboardButton("5. Verfügbarkeit ändern", callback_data="edit_availability")],
+        [InlineKeyboardButton("6. Startbild festlegen", callback_data="set_start")],
+        [InlineKeyboardButton("7. Löschen", callback_data="delete")],
+        [InlineKeyboardButton("8. Änderungen abschließen", callback_data="confirm_changes")],
+        [InlineKeyboardButton("9. Änderungen verwerfen", callback_data="discard_changes")]
     ]
 
     await query.edit_message_text(
@@ -114,6 +117,7 @@ async def photo_handler(update: Update, context):
     except Exception as e:
         print(f"Fehler beim Upload: {e}")
         await status.edit_text("❌ Fehler beim Hochladen des Bildes.")
+
 # Maße bearbeiten
 async def edit_dimensions(update: Update, context):
     query = update.callback_query
@@ -241,6 +245,13 @@ async def set_title(update: Update, context):
     context.user_data["edit_action"] = "title"
     await query.edit_message_text("Bitte sende den neuen Titel für das Bild.")
 
+# Material bearbeiten
+async def edit_material(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+    context.user_data["edit_action"] = "material"
+    await query.edit_message_text("Bitte sende das neue Material für das Bild.")
+
 # Datum bearbeiten
 async def edit_date(update: Update, context):
     query = update.callback_query
@@ -261,6 +272,23 @@ async def edit_date(update: Update, context):
         "Bitte wähle den Monat:",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
+# Änderungen abschließen
+async def finish_config(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+    
+    # Hier könnte Logik stehen, um Änderungen auf dem FTP zu bestätigen, falls erforderlich
+    context.user_data.clear()  # User-Daten zurücksetzen
+    await query.edit_message_text("Änderungen wurden erfolgreich abgeschlossen.")
+
+# Änderungen verwerfen
+async def discard_changes(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+
+    # User-Daten verwerfen
+    context.user_data.clear()
+    await query.edit_message_text("Alle Änderungen wurden verworfen.")
 
 # Monat auswählen und Jahr festlegen
 async def select_month(update: Update, context):
@@ -279,10 +307,27 @@ async def set_year(update: Update, context):
     context.user_data["selected_year"] = year
     selected_month = context.user_data.get("selected_month", "None")
     await update.message.reply_text(f"Datum gespeichert: {selected_month} {year}.")
-    context.user_data["edit_action"] = "dimensions"
-    await update.message.reply_text("Bitte sende die Maße im Format 'Breite x Höhe'.")
+    await return_to_menu(update, context)
 
-# Weitere Funktionen für Maße, Verfügbarkeit, Startbild und Löschen ähnlich ergänzen...
+# Änderungen abschließen
+async def confirm_changes(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Alle Änderungen wurden erfolgreich gespeichert.")
+    context.user_data.clear()
+
+# Änderungen verwerfen
+async def discard_changes(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("Alle Änderungen wurden verworfen.")
+    context.user_data.clear()
+
+# Hauptmenü erneut anzeigen
+async def return_to_menu(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+    await show_image_options(update, context)
 
 # Hauptfunktion
 def main():
@@ -296,11 +341,17 @@ def main():
     application.add_handler(CallbackQueryHandler(set_title, pattern="edit_title"))
     application.add_handler(CallbackQueryHandler(edit_date, pattern="edit_date"))
     application.add_handler(CallbackQueryHandler(edit_dimensions, pattern="edit_dimensions"))
+    application.add_handler(CallbackQueryHandler(edit_material, pattern="edit_material"))
     application.add_handler(CallbackQueryHandler(edit_availability, pattern="edit_availability"))
     application.add_handler(CallbackQueryHandler(set_start_image, pattern="set_start"))
     application.add_handler(CallbackQueryHandler(delete_image, pattern="delete"))
     application.add_handler(CallbackQueryHandler(confirm_delete, pattern="confirm_delete"))
+    application.add_handler(CallbackQueryHandler(cancel_delete, pattern="cancel_delete"))
     application.add_handler(CallbackQueryHandler(select_month, pattern="month_"))
+    application.add_handler(CallbackQueryHandler(confirm_changes, pattern="confirm_changes"))
+    application.add_handler(CallbackQueryHandler(discard_changes, pattern="discard_changes"))
+    application.add_handler(CallbackQueryHandler(finish_config, pattern="finish_config"))
+    application.add_handler(CallbackQueryHandler(discard_changes, pattern="discard_changes"))
     application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, set_year))
 
