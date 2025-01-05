@@ -7,9 +7,9 @@ import sys
 
 # Logging konfigurieren
 logging.basicConfig(
-    level=logging.DEBUG,  # DEBUG-Level für detaillierte Logs
+    level=logging.DEBUG,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)],  # Logs zu stdout leiten
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 
 logger = logging.getLogger(__name__)
@@ -29,7 +29,6 @@ user_data = {}
 
 # Telegram-Bot-Funktionen
 async def upload_to_ftp(local_path, file_name):
-    """Lädt die Datei auf den FTP-Server hoch."""
     try:
         client = aioftp.Client()
         await client.connect(FTP_HOST)
@@ -44,12 +43,10 @@ async def upload_to_ftp(local_path, file_name):
         return False
 
 async def start(update, context):
-    """Handler für den /start Befehl."""
     logger.info(f"Received /start from {update.message.chat.id}")
     await update.message.reply_text("Hallo! Sende mir ein Bild, um es hochzuladen.")
 
 async def photo_handler(update, context):
-    """Handler für empfangene Fotos."""
     chat_id = update.message.chat.id
     status = await update.message.reply_text("📥 Herunterladen des Bildes...")
     try:
@@ -64,7 +61,6 @@ async def photo_handler(update, context):
         await status.edit_text("❌ Fehler beim Hochladen des Bildes.")
 
 async def text_handler(update, context):
-    """Verarbeitet Texteingaben der Benutzer."""
     chat_id = update.message.chat.id
     if chat_id not in user_data:
         await update.message.reply_text("Bitte sende zuerst ein Bild.")
@@ -105,7 +101,6 @@ async def text_handler(update, context):
         await update.message.reply_text("❌ Fehler bei der Verarbeitung.")
 
 async def configure_webhook(application):
-    """Webhook für Telegram konfigurieren."""
     webhook_url = f"{WEBURL}/{BOT_TOKEN}"
     try:
         success = await application.bot.set_webhook(webhook_url)
@@ -117,27 +112,26 @@ async def configure_webhook(application):
         logger.error(f"Error setting webhook: {e}")
 
 async def start_bot():
-    """Bot initialisieren und starten."""
     logger.info("Bot startet...")
     application = Application.builder().token(BOT_TOKEN).build()
 
-    # Handler registrieren
     application.add_handler(CommandHandler("start", start))
     application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
-    # Webhook konfigurieren
     await configure_webhook(application)
 
-    # Webhook-Server starten
     await application.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.getenv("PORT", 8443)),  # Port von Koyeb oder Standard
+        listen="0.0.0.0",  # Lauscht auf allen Schnittstellen
+        port=8443,  # Port 8443 für HTTPS
         url_path=BOT_TOKEN,  # URL-Pfad für den Webhook
     )
 
 if __name__ == "__main__":
-    # Bestehenden Event-Loop verwenden oder neuen erstellen
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(start_bot())
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
 
+    loop.run_until_complete(start_bot())
