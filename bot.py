@@ -102,21 +102,39 @@ async def show_image_options(update: Update, context):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# Upload eines Bildes
 async def photo_handler(update: Update, context):
     chat_id = update.message.chat.id
     status = await update.message.reply_text("📥 Herunterladen des Bildes...")
 
     try:
+        # Bild herunterladen
         file = await update.message.photo[-1].get_file()
         local_path = os.path.join(LOCAL_DOWNLOAD_PATH, file.file_id + ".jpg")
         await file.download_to_drive(local_path)
 
-        user_data[chat_id] = {"file_path": local_path, "file_name": file.file_id + ".jpg", "step": "title"}
-        await status.edit_text("✅ Bild hochgeladen! Bitte sende jetzt den Titel des Bildes.")
+        # Benutzerinformationen speichern
+        user_data[chat_id] = {"file_path": local_path, "file_name": file.file_id + ".jpg"}
+
+        # Upload auf FTP
+        client = aioftp.Client()
+        await client.connect(FTP_HOST)
+        await client.login(FTP_USER, FTP_PASS)
+        await client.change_directory(FTP_UPLOAD_DIR)
+
+        new_file_name = os.path.basename(local_path)
+        await client.upload(local_path)
+        await client.quit()
+
+        # Kontextmenü für das neue Bild anzeigen
+        files = await list_ftp_files()
+        context.user_data["selected_image_index"] = len(files) - 1  # Letztes Bild auswählen
+
+        await status.edit_text(f"✅ Bild hochgeladen: {new_file_name}")
+        await show_image_options(update, context)  # Kontextmenü aufrufen
     except Exception as e:
         print(f"Fehler beim Upload: {e}")
         await status.edit_text("❌ Fehler beim Hochladen des Bildes.")
+
 
 # Maße bearbeiten
 async def edit_dimensions(update: Update, context):
@@ -329,6 +347,51 @@ async def return_to_menu(update: Update, context):
     await query.answer()
     await show_image_options(update, context)
 
+async def text_handler(update: Update, context):
+    chat_id = update.message.chat.id
+    edit_action = context.user_data.get("edit_action", None)
+
+    if not edit_action:
+        await update.message.reply_text("Es wurde keine Bearbeitungsaktion gestartet. Bitte wähle zuerst eine Option aus dem Menü.")
+        return
+
+    if edit_action == "title":
+        new_title = update.message.text.strip()
+        # Hier die Logik für das Ändern des Titels implementieren
+        await update.message.reply_text(f"Titel geändert zu: {new_title}.")
+        context.user_data["edit_action"] = None  # Aktion abschließen
+        await return_to_menu(update, context)
+
+    elif edit_action == "year":
+        year = update.message.text.strip()
+        selected_month = context.user_data.get("selected_month", "None")
+        await update.message.reply_text(f"Datum gespeichert: {selected_month} {year}.")
+        context.user_data["edit_action"] = None  # Aktion abschließen
+        await return_to_menu(update, context)
+
+    elif edit_action == "material":
+        new_material = update.message.text.strip()
+        # Hier die Logik für das Ändern des Materials implementieren
+        await update.message.reply_text(f"Material geändert zu: {new_material}.")
+        context.user_data["edit_action"] = None  # Aktion abschließen
+        await return_to_menu(update, context)
+
+    elif edit_action == "dimensions":
+        new_dimensions = update.message.text.strip()
+        # Überprüfen, ob das Format korrekt ist
+        if "x" not in new_dimensions:
+            await update.message.reply_text("Ungültiges Format. Bitte sende die Maße im Format 'Breite x Höhe'.")
+            return
+
+        # Hier die Logik für das Ändern der Maße implementieren
+        await update.message.reply_text(f"Maße geändert zu: {new_dimensions}.")
+        context.user_data["edit_action"] = None  # Aktion abschließen
+        await return_to_menu(update, context)
+
+    else:
+        await update.message.reply_text("Unbekannte Aktion. Bitte wähle erneut aus dem Menü.")
+
+
 # Hauptfunktion
 def main():
     application = Application.builder().token(BOT_TOKEN).build()
@@ -353,7 +416,7 @@ def main():
     application.add_handler(CallbackQueryHandler(finish_config, pattern="finish_config"))
     application.add_handler(CallbackQueryHandler(discard_changes, pattern="discard_changes"))
     application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, set_year))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
     # Webhook setzen und starten
     application.run_webhook(
