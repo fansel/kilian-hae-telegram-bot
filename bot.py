@@ -5,7 +5,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters
 
 # Konfigurationsparameter
 BOT_TOKEN = os.environ.get('BOT_TOKEN')
-HEROKU_URL = os.environ.get('HEROKU_URL')
+WEBURL = os.environ.get('WEBURL')
 FTP_HOST = os.environ.get('FTP_HOST')
 FTP_USER = os.environ.get('FTP_USER')
 FTP_PASS = os.environ.get('FTP_PASS')
@@ -119,7 +119,7 @@ def main():
         listen="0.0.0.0",
         port=int(os.environ.get("PORT", 8443)),
         url_path=BOT_TOKEN,
-        webhook_url=f"{HEROKU_URL}/{BOT_TOKEN}",
+        webhook_url=f"{WEBURL}/{BOT_TOKEN}",
     )
 
 if __name__ == "__main__":
