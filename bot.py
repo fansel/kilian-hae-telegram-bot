@@ -202,28 +202,24 @@ async def edit_title(update: Update, context):
     query = update.callback_query
     await query.answer()
     context.user_data["edit_action"] = "title"
-    context.user_data["step"] = "handle_edit_action"
     await query.edit_message_text("Bitte sende den neuen Titel für das Bild:")
 
 async def edit_date(update: Update, context):
     query = update.callback_query
     await query.answer()
     context.user_data["edit_action"] = "month"
-    context.user_data["step"] = "handle_edit_action"
     await query.edit_message_text("Bitte wähle den neuen Monat für das Bild:", reply_markup=month_selection_keyboard())
 
 async def edit_material(update: Update, context):
     query = update.callback_query
     await query.answer()
     context.user_data["edit_action"] = "material"
-    context.user_data["step"] = "handle_edit_action"
     await query.edit_message_text("Bitte sende das neue Material für das Bild:")
 
 async def edit_availability(update: Update, context):
     query = update.callback_query
     await query.answer()
     context.user_data["edit_action"] = "availability"
-    context.user_data["step"] = "handle_edit_action"
     keyboard = [
         [InlineKeyboardButton("Verfügbar", callback_data="set_available")],
         [InlineKeyboardButton("Nicht verfügbar", callback_data="set_unavailable")],
@@ -234,7 +230,6 @@ async def set_start_image(update: Update, context):
     query = update.callback_query
     await query.answer()
     context.user_data["edit_action"] = "start_image"
-    context.user_data["step"] = "handle_edit_action"
     await query.edit_message_text("Startbild wird festgelegt...")
 
     files = context.user_data.get("files", [])
@@ -264,7 +259,6 @@ async def delete_image(update: Update, context):
     query = update.callback_query
     await query.answer()
     context.user_data["edit_action"] = "delete"
-    context.user_data["step"] = "handle_edit_action"
     await query.edit_message_text("Bild wird gelöscht...")
 
     selected_image_index = context.user_data.get("selected_image_index")
@@ -284,12 +278,6 @@ async def handle_edit_action(update: Update, context):
     if not edit_action:
         await update.message.reply_text("Es wurde keine Bearbeitungsaktion gestartet. Bitte wähle zuerst eine Option aus dem Menü.")
         return
-
-    # Nachricht löschen (falls möglich)
-    try:
-        await update.message.delete()
-    except Exception as e:
-        print(f"Fehler beim Löschen der Nachricht: {e}")
 
     selected_image_index = context.user_data.get("selected_image_index")
     files = context.user_data.get("files", [])
