@@ -131,7 +131,12 @@ if __name__ == "__main__":
             url_path=BOT_TOKEN,
         )
 
-    # Den vorhandenen Event-Loop nutzen
-    loop = asyncio.get_event_loop()
-    loop.create_task(main())
-    loop.run_forever()
+    # Existierenden Event-Loop verwenden
+    try:
+        asyncio.run(main())
+    except RuntimeError as e:
+        if "This event loop is already running" in str(e):
+            logger.warning("Event-Loop läuft bereits. Starte main() als Task.")
+            asyncio.create_task(main())
+        else:
+            raise
