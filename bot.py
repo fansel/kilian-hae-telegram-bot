@@ -175,37 +175,92 @@ async def edit_dimensions(update: Update, context):
     context.user_data["edit_action"] = "dimensions"
     await query.edit_message_text("Bitte sende die neuen Maße im Format 'Breite x Höhe'.")
 
-# Verfügbarkeit ändern
 async def edit_availability(update: Update, context):
     query = update.callback_query
     await query.answer()
 
-    selected_image_index = context.user_data.get("selected_image_index")
-    files = await list_ftp_files()
-    selected_image_name = files[selected_image_index]
+    chat_id = update.effective_chat.id
+    file_data = user_data.get(chat_id)
 
-    if "_x" in selected_image_name:
-        new_name = selected_image_name.replace("_x", "")
-        availability = "verfügbar"
-    else:
-        base_name, ext = os.path.splitext(selected_image_name)
-        new_name = f"{base_name}_x{ext}"
+    if not file_data:
+        await query.edit_message_text("❌ Kein Bild ausgewählt.")
+        return
+
+    old_name = file_data["file_name"]
+    base_name, ext = os.path.splitext(old_name)
+
+    # Verfügbarkeitsstatus bestimmen
+    if "_x" in base_name:
         availability = "nicht verfügbar"
+        new_availability = "verfügbar"
+    else:
+        availability = "verfügbar"
+        new_availability = "nicht verfügbar"
 
-    # Datei auf FTP umbenennen
+    # Bestätigungs-Keyboard
+    keyboard = [
+        [InlineKeyboardButton("Ja, ändern", callback_data="confirm_availability")],
+        [InlineKeyboardButton("Nein, zurück", callback_data="cancel_availability")],
+    ]
+
+    # Verfügbarkeitsstatus anzeigen und Änderung vorschlagen
+    context.user_data["edit_availability"] = {
+        "old_name": old_name,
+        "new_name": base_name.replace("_x", "") + ext if "_x" in base_name else base_name + "_x" + ext,
+        "new_status": new_availability,
+    }
+    await query.edit_message_text(
+        f"📂 Der aktuelle Status ist: {availability}.\n"
+        f"Möchtest du den Status auf {new_availability} ändern?",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+    )
+async def confirm_availability(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+
+    edit_data = context.user_data.get("edit_availability")
+    if not edit_data:
+        await query.edit_message_text("❌ Fehler: Keine Verfügbarkeitsänderung gefunden.")
+        return
+
+    old_name = edit_data["old_name"]
+    new_name = edit_data["new_name"]
+    new_status = edit_data["new_status"]
+
+    # Datei umbenennen
+    if await rename_ftp_file(old_name, new_name):
+        # Aktualisiere Benutzerdaten
+        chat_id = update.effective_chat.id
+        user_data[chat_id]["file_name"] = new_name
+        await query.edit_message_text(f"✅ Verfügbarkeit erfolgreich geändert zu: {new_status}.")
+
+        # Kontextmenü erneut anzeigen
+        await show_image_options(update, context)
+    else:
+        await query.edit_message_text("❌ Fehler beim Ändern der Verfügbarkeit.")
+
+async def rename_ftp_file(old_name, new_name):
     try:
         client = aioftp.Client()
         await client.connect(FTP_HOST)
         await client.login(FTP_USER, FTP_PASS)
         await client.rename(
-            os.path.join(FTP_UPLOAD_DIR, selected_image_name),
+            os.path.join(FTP_UPLOAD_DIR, old_name),
             os.path.join(FTP_UPLOAD_DIR, new_name)
         )
         await client.quit()
-
-        await query.edit_message_text(f"Verfügbarkeit geändert: {availability}.")
+        return True
     except Exception as e:
-        await query.edit_message_text(f"Fehler beim Ändern der Verfügbarkeit: {e}")
+        print(f"Fehler beim Umbenennen der Datei: {e}")
+        return False
+
+async def cancel_availability(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+
+    # Kontextmenü erneut anzeigen
+    await show_image_options(update, context)
+
 
 # Startbild festlegen
 async def set_start_image(update: Update, context):
@@ -495,6 +550,8 @@ def main():
     application.add_handler(CallbackQueryHandler(confirm_changes, pattern="confirm_changes"))
     application.add_handler(CallbackQueryHandler(discard_changes, pattern="discard_changes"))
     application.add_handler(CallbackQueryHandler(finish_config, pattern="finish_config"))
+    application.add_handler(CallbackQueryHandler(confirm_availability, pattern="confirm_availability"))
+    application.add_handler(CallbackQueryHandler(cancel_availability, pattern="cancel_availability"))
     application.add_handler(CallbackQueryHandler(discard_changes, pattern="discard_changes"))
     application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, multi_step_handler))
