@@ -109,21 +109,29 @@ async def configure_webhook(application):
     except Exception as e:
         logger.error(f"Error setting webhook: {e}")
 
-async def main():
-    logger.info("Bot startet...")
-    application = Application.builder().token(BOT_TOKEN).build()
-
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
-
-    await configure_webhook(application)
-
-    await application.run_webhook(
-        listen="0.0.0.0",
-        port=8443,
-        url_path=BOT_TOKEN,
-    )
-
 if __name__ == "__main__":
-    asyncio.run(main())
+    async def main():
+        logger.info("Bot startet...")
+        application = Application.builder().token(BOT_TOKEN).build()
+
+        # Handler registrieren
+        application.add_handler(CommandHandler("start", start))
+        application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
+        application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+
+        # Webhook konfigurieren
+        webhook_url = f"{WEBURL}/{BOT_TOKEN}"
+        await application.bot.set_webhook(webhook_url)
+        logger.info(f"Webhook erfolgreich gesetzt: {webhook_url}")
+
+        # Webhook-Server starten
+        await application.run_webhook(
+            listen="0.0.0.0",
+            port=int(os.getenv("PORT", 8443)),
+            url_path=BOT_TOKEN,
+        )
+
+    # Den vorhandenen Event-Loop nutzen
+    loop = asyncio.get_event_loop()
+    loop.create_task(main())
+    loop.run_forever()
