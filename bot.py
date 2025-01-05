@@ -101,11 +101,11 @@ async def text_handler(update: Update, context):
     local_path = user_info.get("file_path")
 
     if step == "title":
-        user_info["title"] = update.message.text.replace(" ", "_")
+        user_info["title"] = update.message.text.replace(" ", "-")
         user_info["step"] = "material"
         await update.message.reply_text("Titel gespeichert. Bitte sende das Material des Bildes.")
     elif step == "material":
-        user_info["material"] = update.message.text.replace(" ", "_")
+        user_info["material"] = update.message.text.replace(" ", "-")
         user_info["step"] = "date"
         await update.message.reply_text("Material gespeichert. Bitte sende das Datum im Format 'Monat Jahr'.")
     elif step == "date":
@@ -118,31 +118,35 @@ async def text_handler(update: Update, context):
         except ValueError:
             await update.message.reply_text("Ungültiges Format. Bitte sende das Datum im Format 'Monat Jahr'.")
     elif step == "dimensions":
-        user_info["dimensions"] = update.message.text.replace(" ", "")
-        user_info["step"] = None
+        try:
+            width, height = update.message.text.split("x")
+            user_info["dimensions"] = f"{width}-{height}"
+            user_info["step"] = None
 
-        # Neuer Dateiname erstellen
-        new_name = f"{user_info['title']}_{user_info['material']}_{user_info['month']}_{user_info['year']}_{user_info['dimensions']}.jpg"
-        new_local_path = os.path.join(LOCAL_DOWNLOAD_PATH, new_name)
+            # Neuer Dateiname erstellen
+            new_name = f"{user_info['title']}_{user_info['material']}_{user_info['month']}-{user_info['year']}_{user_info['dimensions']}.jpg"
+            new_local_path = os.path.join(LOCAL_DOWNLOAD_PATH, new_name)
 
-        # Datei lokal umbenennen
-        os.rename(local_path, new_local_path)
+            # Datei lokal umbenennen
+            os.rename(local_path, new_local_path)
 
-        # Datei auf FTP hochladen
-        success = await upload_to_ftp(new_local_path, new_name)
+            # Datei auf FTP hochladen
+            success = await upload_to_ftp(new_local_path, new_name)
 
-        if success:
-            await update.message.reply_text(f"✅ Datei erfolgreich hochgeladen: {new_name}")
-        else:
-            await update.message.reply_text("❌ Fehler beim Hochladen der Datei.")
+            if success:
+                await update.message.reply_text(f"✅ Datei erfolgreich hochgeladen: {new_name}")
+            else:
+                await update.message.reply_text("❌ Fehler beim Hochladen der Datei.")
 
-        # Lokale Datei löschen
-        if os.path.exists(new_local_path):
-            os.remove(new_local_path)
-            print(f"Datei lokal gelöscht: {new_local_path}")
+            # Lokale Datei löschen
+            if os.path.exists(new_local_path):
+                os.remove(new_local_path)
+                print(f"Datei lokal gelöscht: {new_local_path}")
 
-        # Benutzerdaten entfernen
-        del user_data[chat_id]
+            # Benutzerdaten entfernen
+            del user_data[chat_id]
+        except ValueError:
+            await update.message.reply_text("Ungültiges Format. Bitte sende die Maße im Format 'Breite x Höhe'.")
 
 # Bilder auflisten
 async def list_images(update: Update, context):
