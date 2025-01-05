@@ -9,12 +9,19 @@ WEBURL = os.environ.get('WEBURL')
 FTP_HOST = os.environ.get('FTP_HOST')
 FTP_USER = os.environ.get('FTP_USER')
 FTP_PASS = os.environ.get('FTP_PASS')
-FTP_UPLOAD_DIR = "/www/gallery"
+FTP_UPLOAD_DIR = "./"
 LOCAL_DOWNLOAD_PATH = "./downloads/"
 os.makedirs(LOCAL_DOWNLOAD_PATH, exist_ok=True)
 
 # Temporäre Speicherung von Benutzerdaten
 user_data = {}
+debug_mode = False
+debug_chat_id = None
+
+# Hilfsfunktion: Debug-Nachrichten senden
+async def send_debug_message(context, message):
+    if debug_mode and debug_chat_id:
+        await context.bot.send_message(chat_id=debug_chat_id, text=message)
 
 # Hilfsfunktion: Datei auf FTP hochladen
 async def upload_to_ftp(local_path, file_name):
@@ -25,9 +32,10 @@ async def upload_to_ftp(local_path, file_name):
         await client.change_directory(FTP_UPLOAD_DIR)
         await client.upload(local_path)
         await client.quit()
+        await send_debug_message(context, f"Datei erfolgreich hochgeladen: {file_name}")
         return True
     except Exception as e:
-        print(f"FTP-Upload-Fehler: {e}")
+        await send_debug_message(context, f"FTP-Upload-Fehler: {e}")
         return False
 
 # Hilfsfunktion: Datei von FTP löschen
@@ -39,9 +47,10 @@ async def delete_from_ftp(file_name):
         await client.change_directory(FTP_UPLOAD_DIR)
         await client.remove(file_name)
         await client.quit()
+        await send_debug_message(context, f"Datei erfolgreich gelöscht: {file_name}")
         return True
     except Exception as e:
-        print(f"FTP-Lösch-Fehler: {e}")
+        await send_debug_message(context, f"FTP-Lösch-Fehler: {e}")
         return False
 
 # Hilfsfunktion: Dateien von FTP auflisten
@@ -56,9 +65,10 @@ async def list_ftp_files():
             if info["type"] == "file":
                 files.append(path.name)
         await client.quit()
+        await send_debug_message(context, f"Dateien auf FTP gelistet: {files}")
         return files
     except Exception as e:
-        print(f"Fehler beim Abrufen der Dateien: {e}")
+        await send_debug_message(context, f"Fehler beim Abrufen der Dateien: {e}")
         return []
 
 # Start-Befehl
@@ -74,7 +84,16 @@ async def help_command(update: Update, context):
         "/help - Zeigt diese Hilfe an\n"
         "/list - Listet alle Bilder aus dem Verzeichnis\n"
         "/delete - Löscht ein Bild aus dem Verzeichnis\n"
+        "/debug - Schaltet den Debug-Modus ein oder aus\n"
     )
+
+# Debug-Befehl
+async def debug_command(update: Update, context):
+    global debug_mode, debug_chat_id
+    debug_mode = not debug_mode
+    debug_chat_id = update.message.chat.id if debug_mode else None
+    status = "aktiviert" wenn debug_mode sonst "deaktiviert"
+    await update.message.reply_text(f"Debug-Modus {status}.")
 
 # Bild hochladen
 async def photo_handler(update: Update, context):
@@ -88,6 +107,7 @@ async def photo_handler(update: Update, context):
 
     user_data[chat_id] = {"file_path": local_path, "file_name": file.file_id + ".jpg", "step": "title"}
     await status.edit_text("✅ Bild hochgeladen! Bitte sende jetzt den Titel des Bildes.")
+    await send_debug_message(context, f"Bild heruntergeladen und gespeichert unter: {local_path}")
 
 # Benutzerinformationen abfragen und Datei umbenennen
 async def text_handler(update: Update, context):
@@ -129,6 +149,7 @@ async def text_handler(update: Update, context):
 
             # Datei lokal umbenennen
             os.rename(local_path, new_local_path)
+            await send_debug_message(context, f"Datei lokal umbenannt: {local_path} -> {new_local_path}")
 
             # Datei auf FTP hochladen
             success = await upload_to_ftp(new_local_path, new_name)
@@ -141,7 +162,7 @@ async def text_handler(update: Update, context):
             # Lokale Datei löschen
             if os.path.exists(new_local_path):
                 os.remove(new_local_path)
-                print(f"Datei lokal gelöscht: {new_local_path}")
+                await send_debug_message(context, f"Datei lokal gelöscht: {new_local_path}")
 
             # Benutzerdaten entfernen
             del user_data[chat_id]
@@ -198,11 +219,11 @@ async def edit_text_handler(update: Update, context):
     old_name = user_info.get("file_name")
 
     if step == "edit_title":
-        user_info["title"] = update.message.text.replace(" ", "_")
+        user_info["title"] = update.message.text.replace(" ", "-")
         user_info["step"] = "edit_material"
         await update.message.reply_text("Titel gespeichert. Bitte sende das neue Material.")
     elif step == "edit_material":
-        user_info["material"] = update.message.text.replace(" ", "_")
+        user_info["material"] = update.message.text.replace(" ", "-")
         user_info["step"] = "edit_date"
         await update.message.reply_text("Material gespeichert. Bitte sende das neue Datum im Format 'Monat Jahr'.")
     elif step == "edit_date":
@@ -219,7 +240,7 @@ async def edit_text_handler(update: Update, context):
         user_info["step"] = None
 
         # Neuer Dateiname erstellen
-        new_name = f"{user_info['title']}_{user_info['material']}_{user_info['month']}_{user_info['year']}_{user_info['dimensions']}.jpg"
+        new_name = f"{user_info['title']}_{user_info['material']}_{user_info['month']}-{user_info['year']}_{user_info['dimensions']}.jpg"
         old_path = os.path.join(FTP_UPLOAD_DIR, old_name)
         new_path = os.path.join(FTP_UPLOAD_DIR, new_name)
 
@@ -231,8 +252,10 @@ async def edit_text_handler(update: Update, context):
             await client.rename(old_path, new_path)
             await client.quit()
             await update.message.reply_text(f"✅ Datei erfolgreich umbenannt: {new_name}")
+            await send_debug_message(context, f"Datei auf FTP umbenannt: {old_path} -> {new_path}")
         except Exception as e:
             await update.message.reply_text(f"❌ Fehler beim Umbenennen der Datei: {e}")
+            await send_debug_message(context, f"Fehler beim Umbenennen der Datei: {e}")
 
         # Benutzerdaten entfernen
         del user_data[chat_id]
@@ -284,6 +307,7 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("list", list_images))
     application.add_handler(CommandHandler("delete", delete_image))
+    application.add_handler(CommandHandler("debug", debug_command))
     application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
     application.add_handler(CallbackQueryHandler(button_handler, pattern='^select_'))
