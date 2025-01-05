@@ -121,33 +121,43 @@ if __name__ == "__main__":
 
         # Webhook konfigurieren
         webhook_url = f"{WEBURL}/{BOT_TOKEN}"
-        success = await application.bot.set_webhook(webhook_url)
-        if success:
-            logger.info(f"Webhook erfolgreich gesetzt: {webhook_url}")
-        else:
-            logger.error("Fehler beim Setzen des Webhooks.")
-
-        # Webhook-Server starten
         try:
+            success = await application.bot.set_webhook(webhook_url)
+            if success:
+                logger.info(f"Webhook erfolgreich gesetzt: {webhook_url}")
+            else:
+                logger.error("Fehler beim Setzen des Webhooks.")
+                return
+        except Exception as e:
+            logger.error(f"Webhook-Fehler: {e}")
+            return
+
+        try:
+            # Webhook-Server starten
             await application.run_webhook(
                 listen="0.0.0.0",
                 port=int(os.getenv("PORT", 8443)),
                 url_path=BOT_TOKEN,
             )
+        except Exception as e:
+            logger.error(f"Fehler beim Starten des Webhook-Servers: {e}")
         finally:
+            logger.info("Shutdown-Prozess gestartet.")
             await application.shutdown()
 
-    try:
-        # Prüfe, ob ein Event-Loop bereits läuft
+    def run_bot():
         try:
-            loop = asyncio.get_running_loop()
+            loop = asyncio.get_event_loop()
         except RuntimeError:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
 
-        # Hauptaufgabe starten
-        loop.run_until_complete(main())
-    except KeyboardInterrupt:
-        logger.info("Beenden erkannt. Event-Loop wird geschlossen.")
-    except Exception as e:
-        logger.error(f"Unbehandelter Fehler: {e}")
+        try:
+            # Hauptaufgabe ausführen
+            loop.run_until_complete(main())
+        except KeyboardInterrupt:
+            logger.info("Beenden erkannt. Bot wird gestoppt.")
+        except Exception as e:
+            logger.error(f"Unbehandelter Fehler: {e}")
+
+    run_bot()
