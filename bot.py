@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 # Konfigurationsparameter
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBURL = os.getenv("WEBURL").rstrip("/")  # Basis-URL deiner Anwendung
+WEBURL = os.getenv("WEBURL").rstrip("/")
 FTP_HOST = os.getenv("FTP_HOST")
 FTP_USER = os.getenv("FTP_USER")
 FTP_PASS = os.getenv("FTP_PASS")
@@ -24,10 +24,8 @@ FTP_UPLOAD_DIR = "/www/gallery"
 LOCAL_DOWNLOAD_PATH = "./downloads/"
 os.makedirs(LOCAL_DOWNLOAD_PATH, exist_ok=True)
 
-# Temporäre Speicherung von Benutzerdaten
 user_data = {}
 
-# Telegram-Bot-Funktionen
 async def upload_to_ftp(local_path, file_name):
     try:
         client = aioftp.Client()
@@ -111,7 +109,7 @@ async def configure_webhook(application):
     except Exception as e:
         logger.error(f"Error setting webhook: {e}")
 
-async def start_bot():
+async def main():
     logger.info("Bot startet...")
     application = Application.builder().token(BOT_TOKEN).build()
 
@@ -122,16 +120,10 @@ async def start_bot():
     await configure_webhook(application)
 
     await application.run_webhook(
-        listen="0.0.0.0",  # Lauscht auf allen Schnittstellen
-        port=8443,  # Port 8443 für HTTPS
-        url_path=BOT_TOKEN,  # URL-Pfad für den Webhook
+        listen="0.0.0.0",
+        port=8443,
+        url_path=BOT_TOKEN,
     )
 
 if __name__ == "__main__":
-    try:
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-
-    loop.run_until_complete(start_bot())
+    asyncio.run(main())
