@@ -169,15 +169,14 @@ async def multi_step_handler(update: Update, context):
     elif current_step == "set_material":
         # Speichere das Material
         file_data["material"] = update.message.text.strip()
-        file_data["step"] = "set_month"  # Weiter zum nächsten Schritt
-        await update.message.reply_text("✅ Material gespeichert. Bitte wähle den Monat aus:", reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("Januar", callback_data="month_Januar"), InlineKeyboardButton("Februar", callback_data="month_Februar")],
-            [InlineKeyboardButton("März", callback_data="month_März"), InlineKeyboardButton("April", callback_data="month_April")],
-            [InlineKeyboardButton("Mai", callback_data="month_Mai"), InlineKeyboardButton("Juni", callback_data="month_Juni")],
-            [InlineKeyboardButton("Juli", callback_data="month_Juli"), InlineKeyboardButton("August", callback_data="month_August")],
-            [InlineKeyboardButton("September", callback_data="month_September"), InlineKeyboardButton("Oktober", callback_data="month_Oktober")],
-            [InlineKeyboardButton("November", callback_data="month_November"), InlineKeyboardButton("Dezember", callback_data="month_Dezember")],
-        ]))
+        file_data["step"] = "select_month"  # Weiter zum nächsten Schritt
+        await update.message.reply_text("✅ Material gespeichert. Bitte wähle jetzt den Monat aus:", reply_markup=month_selection_keyboard())
+
+    elif current_step == "select_month":
+        # Speichere den Monat
+        file_data["month"] = update.message.text.strip()
+        file_data["step"] = "set_year"  # Weiter zum nächsten Schritt
+        await update.message.reply_text("✅ Monat gespeichert. Bitte sende jetzt das Jahr (z. B. 2024):")
 
     elif current_step == "set_year":
         # Speichere das Jahr
@@ -203,26 +202,19 @@ async def edit_title(update: Update, context):
     query = update.callback_query
     await query.answer()
     context.user_data["edit_action"] = "title"
-    await query.edit_message_text("Bitte sende den neuen Titel für das Bild.")
+    await query.edit_message_text("Bitte sende den neuen Titel für das Bild:")
 
 async def edit_date(update: Update, context):
     query = update.callback_query
     await query.answer()
-    context.user_data["edit_action"] = "date"
-    await query.edit_message_text("Bitte wähle den Monat aus:", reply_markup=InlineKeyboardMarkup([
-        [InlineKeyboardButton("Januar", callback_data="month_edit_Januar"), InlineKeyboardButton("Februar", callback_data="month_edit_Februar")],
-        [InlineKeyboardButton("März", callback_data="month_edit_März"), InlineKeyboardButton("April", callback_data="month_edit_April")],
-        [InlineKeyboardButton("Mai", callback_data="month_edit_Mai"), InlineKeyboardButton("Juni", callback_data="month_edit_Juni")],
-        [InlineKeyboardButton("Juli", callback_data="month_edit_Juli"), InlineKeyboardButton("August", callback_data="month_edit_August")],
-        [InlineKeyboardButton("September", callback_data="month_edit_September"), InlineKeyboardButton("Oktober", callback_data="month_edit_Oktober")],
-        [InlineKeyboardButton("November", callback_data="month_edit_November"), InlineKeyboardButton("Dezember", callback_data="month_edit_Dezember")],
-    ]))
+    context.user_data["edit_action"] = "month"
+    await query.edit_message_text("Bitte wähle den neuen Monat für das Bild:", reply_markup=month_selection_keyboard())
 
 async def edit_material(update: Update, context):
     query = update.callback_query
     await query.answer()
     context.user_data["edit_action"] = "material"
-    await query.edit_message_text("Bitte sende das neue Material für das Bild.")
+    await query.edit_message_text("Bitte sende das neue Material für das Bild:")
 
 async def edit_availability(update: Update, context):
     query = update.callback_query
@@ -278,13 +270,6 @@ async def delete_image(update: Update, context):
     else:
         await query.edit_message_text(f"Fehler beim Löschen des Bildes '{selected_image_name}'.")
 
-async def handle_month_selection(update: Update, context):
-    query = update.callback_query
-    month = query.data.split("_")[1]
-    context.user_data["selected_month"] = month
-    context.user_data["edit_action"] = "set_year"
-    await query.edit_message_text(f"Bitte sende das Jahr für den Monat {month} (z. B. 2024).")
-
 # Änderungs-Handler
 async def handle_edit_action(update: Update, context):
     chat_id = update.message.chat.id
@@ -316,20 +301,28 @@ async def handle_edit_action(update: Update, context):
             await update.message.reply_text(f"Titel erfolgreich geändert zu: {new_title}.")
         else:
             await update.message.reply_text("❌ Fehler beim Ändern des Titels.")
+        await show_image_options(update, context)
 
-    elif edit_action == "date":
-        year = update.message.text.strip()
-        month = context.user_data.get("selected_month")
+    elif edit_action == "month":
+        new_month = update.message.text.strip()
+        context.user_data["edit_action"] = "year"  # Weiter zum Jahr
+        context.user_data["new_month"] = new_month
+        await update.message.reply_text("✅ Monat gespeichert. Bitte sende jetzt das Jahr (z. B. 2024):")
+
+    elif edit_action == "year":
+        new_year = update.message.text.strip()
+        new_month = context.user_data.get("new_month")
         parts = selected_image_name.split("_")
         if len(parts) < 3:
             await update.message.reply_text("❌ Fehler: Dateiname hat ein unerwartetes Format.")
             return
-        parts[2] = f"{month}-{year}"  # Ersetze den dritten Teil mit dem neuen Datum
+        parts[2] = f"{new_month}-{new_year}"  # Ersetze den dritten Teil mit dem neuen Datum
         new_name = "_".join(parts)
         if await rename_ftp_file(selected_image_name, new_name):
-            await update.message.reply_text(f"Datum erfolgreich geändert zu: {month}-{year}.")
+            await update.message.reply_text(f"Datum erfolgreich geändert zu: {new_month}-{new_year}.")
         else:
             await update.message.reply_text("❌ Fehler beim Ändern des Datums.")
+        await show_image_options(update, context)
 
     elif edit_action == "material":
         new_material = update.message.text.strip()
@@ -343,6 +336,7 @@ async def handle_edit_action(update: Update, context):
             await update.message.reply_text(f"Material erfolgreich geändert zu: {new_material}.")
         else:
             await update.message.reply_text("❌ Fehler beim Ändern des Materials.")
+        await show_image_options(update, context)
 
     elif edit_action == "availability":
         availability_status = update.callback_query.data
@@ -354,9 +348,20 @@ async def handle_edit_action(update: Update, context):
             await update.message.reply_text(f"Verfügbarkeit erfolgreich geändert zu: {'verfügbar' if availability_status == 'set_available' else 'nicht verfügbar'}.")
         else:
             await update.message.reply_text("❌ Fehler beim Ändern der Verfügbarkeit.")
+        await show_image_options(update, context)
 
     context.user_data["edit_action"] = None  # Aktion abschließen
-    await show_image_options(update, context)  # Zurück zum Bildoptionsmenü
+
+# Hilfsfunktion: Monat-Auswahl-Tastatur
+def month_selection_keyboard():
+    months = [
+        "Januar", "Februar", "März", "April", "Mai", "Juni",
+        "Juli", "August", "September", "Oktober", "November", "Dezember"
+    ]
+    keyboard = [
+        [InlineKeyboardButton(month, callback_data=month) for month in months]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 # Hauptfunktion
 def main():
@@ -373,7 +378,6 @@ def main():
     application.add_handler(CallbackQueryHandler(edit_availability, pattern="edit_availability"))
     application.add_handler(CallbackQueryHandler(set_start_image, pattern="set_start"))
     application.add_handler(CallbackQueryHandler(delete_image, pattern="delete"))
-    application.add_handler(CallbackQueryHandler(handle_month_selection, pattern="month_"))
     application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, multi_step_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_action))
