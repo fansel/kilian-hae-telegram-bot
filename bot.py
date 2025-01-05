@@ -105,35 +105,66 @@ async def show_image_options(update: Update, context):
 async def photo_handler(update: Update, context):
     chat_id = update.message.chat.id
     status = await update.message.reply_text("📥 Herunterladen des Bildes...")
-
     try:
-        # Bild herunterladen
+        # Bild herunterladen und lokal speichern
         file = await update.message.photo[-1].get_file()
         local_path = os.path.join(LOCAL_DOWNLOAD_PATH, file.file_id + ".jpg")
         await file.download_to_drive(local_path)
 
-        # Benutzerinformationen speichern
-        user_data[chat_id] = {"file_path": local_path, "file_name": file.file_id + ".jpg"}
+        # Speichere Bilddaten für den Benutzer
+        user_data[chat_id] = {
+            "file_path": local_path,
+            "file_name": file.file_id + ".jpg",
+            "step": "set_title",  # Startet mit der Titelabfrage
+        }
 
-        # Upload auf FTP
-        client = aioftp.Client()
-        await client.connect(FTP_HOST)
-        await client.login(FTP_USER, FTP_PASS)
-        await client.change_directory(FTP_UPLOAD_DIR)
-
-        new_file_name = os.path.basename(local_path)
-        await client.upload(local_path)
-        await client.quit()
-
-        # Kontextmenü für das neue Bild anzeigen
-        files = await list_ftp_files()
-        context.user_data["selected_image_index"] = len(files) - 1  # Letztes Bild auswählen
-
-        await status.edit_text(f"✅ Bild hochgeladen: {new_file_name}")
-        await show_image_options(update, context)  # Kontextmenü aufrufen
+        # Starte Multi-Step-Prozess
+        await status.edit_text("✅ Bild erfolgreich heruntergeladen. Bitte sende jetzt den Titel für das Bild:")
     except Exception as e:
-        print(f"Fehler beim Upload: {e}")
-        await status.edit_text("❌ Fehler beim Hochladen des Bildes.")
+        print(f"Fehler beim Herunterladen: {e}")
+        await status.edit_text("❌ Fehler beim Herunterladen des Bildes.")
+async def multi_step_handler(update: Update, context):
+    chat_id = update.message.chat.id
+    file_data = user_data.get(chat_id)
+
+    if not file_data:
+        await update.message.reply_text("❌ Kein Bild ausgewählt. Bitte lade zuerst ein Bild hoch.")
+        return
+
+    # Bestimme den aktuellen Schritt
+    current_step = file_data.get("step", "set_title")  # Standardmäßig mit "set_title" starten
+
+    if current_step == "set_title":
+        # Speichere den Titel
+        file_data["title"] = update.message.text.strip()
+        file_data["step"] = "set_date"  # Weiter zum nächsten Schritt
+        await update.message.reply_text("✅ Titel gespeichert. Bitte sende jetzt das Datum (z. B. 2025-01-05):")
+
+    elif current_step == "set_date":
+        # Speichere das Datum
+        file_data["date"] = update.message.text.strip()
+        file_data["step"] = "set_material"  # Weiter zum nächsten Schritt
+        await update.message.reply_text("✅ Datum gespeichert. Bitte sende jetzt das Material (z. B. Leinwand):")
+
+    elif current_step == "set_material":
+        # Speichere das Material
+        file_data["material"] = update.message.text.strip()
+
+        # Prüfen, ob alle Details ausgefüllt sind
+        if all(file_data[key] for key in ["title", "date", "material"]):
+            # Neuen Dateinamen erstellen
+            new_name = f"{file_data['title']}_{file_data['date']}_{file_data['material']}.jpg"
+            # Datei hochladen
+            if await upload_to_ftp(file_data["file_path"], new_name):
+                await update.message.reply_text(f"✅ Alle Details gespeichert und Bild hochgeladen: {new_name}")
+            else:
+                await update.message.reply_text("❌ Fehler beim Hochladen des Bildes.")
+            user_data.pop(chat_id)  # Daten für diesen Benutzer löschen
+        else:
+            await update.message.reply_text("❌ Es fehlen noch Informationen. Bitte starte erneut.")
+
+    else:
+        await update.message.reply_text("❌ Unbekannter Schritt. Bitte starte erneut mit dem Hochladen eines Bildes.")
 
 
 # Maße bearbeiten
@@ -466,6 +497,7 @@ def main():
     application.add_handler(CallbackQueryHandler(finish_config, pattern="finish_config"))
     application.add_handler(CallbackQueryHandler(discard_changes, pattern="discard_changes"))
     application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, multi_step_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
     # Webhook setzen und starten
