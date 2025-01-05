@@ -171,18 +171,12 @@ async def multi_step_handler(update: Update, context):
         file_data["material"] = update.message.text.strip()
         file_data["step"] = "set_month"  # Weiter zum nächsten Schritt
         await update.message.reply_text("✅ Material gespeichert. Bitte wähle den Monat aus:", reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("Januar", callback_data="month_Januar")],
-            [InlineKeyboardButton("Februar", callback_data="month_Februar")],
-            [InlineKeyboardButton("März", callback_data="month_März")],
-            [InlineKeyboardButton("April", callback_data="month_April")],
-            [InlineKeyboardButton("Mai", callback_data="month_Mai")],
-            [InlineKeyboardButton("Juni", callback_data="month_Juni")],
-            [InlineKeyboardButton("Juli", callback_data="month_Juli")],
-            [InlineKeyboardButton("August", callback_data="month_August")],
-            [InlineKeyboardButton("September", callback_data="month_September")],
-            [InlineKeyboardButton("Oktober", callback_data="month_Oktober")],
-            [InlineKeyboardButton("November", callback_data="month_November")],
-            [InlineKeyboardButton("Dezember", callback_data="month_Dezember")]
+            [InlineKeyboardButton("Januar", callback_data="month_Januar"), InlineKeyboardButton("Februar", callback_data="month_Februar")],
+            [InlineKeyboardButton("März", callback_data="month_März"), InlineKeyboardButton("April", callback_data="month_April")],
+            [InlineKeyboardButton("Mai", callback_data="month_Mai"), InlineKeyboardButton("Juni", callback_data="month_Juni")],
+            [InlineKeyboardButton("Juli", callback_data="month_Juli"), InlineKeyboardButton("August", callback_data="month_August")],
+            [InlineKeyboardButton("September", callback_data="month_September"), InlineKeyboardButton("Oktober", callback_data="month_Oktober")],
+            [InlineKeyboardButton("November", callback_data="month_November"), InlineKeyboardButton("Dezember", callback_data="month_Dezember")],
         ]))
 
     elif current_step == "set_year":
@@ -204,15 +198,6 @@ async def multi_step_handler(update: Update, context):
     else:
         await update.message.reply_text("❌ Unbekannter Schritt. Bitte starte erneut mit dem Hochladen eines Bildes.")
 
-# Monat auswählen und Jahr festlegen
-async def select_month(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-    selected_month = query.data.split("_")[1]
-    context.user_data["edit_action"] = "year"
-    context.user_data["selected_month"] = selected_month
-    await query.edit_message_text(f"Monat '{selected_month}' ausgewählt. Bitte sende jetzt das Jahr (z. B. 2025).")
-
 # Bearbeitungsfunktionen
 async def edit_title(update: Update, context):
     query = update.callback_query
@@ -225,18 +210,12 @@ async def edit_date(update: Update, context):
     await query.answer()
     context.user_data["edit_action"] = "date"
     await query.edit_message_text("Bitte wähle den Monat aus:", reply_markup=InlineKeyboardMarkup([
-        [InlineKeyboardButton("Januar", callback_data="month_Januar")],
-        [InlineKeyboardButton("Februar", callback_data="month_Februar")],
-        [InlineKeyboardButton("März", callback_data="month_März")],
-        [InlineKeyboardButton("April", callback_data="month_April")],
-        [InlineKeyboardButton("Mai", callback_data="month_Mai")],
-        [InlineKeyboardButton("Juni", callback_data="month_Juni")],
-        [InlineKeyboardButton("Juli", callback_data="month_Juli")],
-        [InlineKeyboardButton("August", callback_data="month_August")],
-        [InlineKeyboardButton("September", callback_data="month_September")],
-        [InlineKeyboardButton("Oktober", callback_data="month_Oktober")],
-        [InlineKeyboardButton("November", callback_data="month_November")],
-        [InlineKeyboardButton("Dezember", callback_data="month_Dezember")]
+        [InlineKeyboardButton("Januar", callback_data="month_edit_Januar"), InlineKeyboardButton("Februar", callback_data="month_edit_Februar")],
+        [InlineKeyboardButton("März", callback_data="month_edit_März"), InlineKeyboardButton("April", callback_data="month_edit_April")],
+        [InlineKeyboardButton("Mai", callback_data="month_edit_Mai"), InlineKeyboardButton("Juni", callback_data="month_edit_Juni")],
+        [InlineKeyboardButton("Juli", callback_data="month_edit_Juli"), InlineKeyboardButton("August", callback_data="month_edit_August")],
+        [InlineKeyboardButton("September", callback_data="month_edit_September"), InlineKeyboardButton("Oktober", callback_data="month_edit_Oktober")],
+        [InlineKeyboardButton("November", callback_data="month_edit_November"), InlineKeyboardButton("Dezember", callback_data="month_edit_Dezember")],
     ]))
 
 async def edit_material(update: Update, context):
@@ -299,6 +278,13 @@ async def delete_image(update: Update, context):
     else:
         await query.edit_message_text(f"Fehler beim Löschen des Bildes '{selected_image_name}'.")
 
+async def handle_month_selection(update: Update, context):
+    query = update.callback_query
+    month = query.data.split("_")[1]
+    context.user_data["selected_month"] = month
+    context.user_data["edit_action"] = "set_year"
+    await query.edit_message_text(f"Bitte sende das Jahr für den Monat {month} (z. B. 2024).")
+
 # Änderungs-Handler
 async def handle_edit_action(update: Update, context):
     chat_id = update.message.chat.id
@@ -332,15 +318,16 @@ async def handle_edit_action(update: Update, context):
             await update.message.reply_text("❌ Fehler beim Ändern des Titels.")
 
     elif edit_action == "date":
-        new_date = f"{context.user_data.get('selected_month')}-{update.message.text.strip()}"
+        year = update.message.text.strip()
+        month = context.user_data.get("selected_month")
         parts = selected_image_name.split("_")
         if len(parts) < 3:
             await update.message.reply_text("❌ Fehler: Dateiname hat ein unerwartetes Format.")
             return
-        parts[2] = new_date  # Ersetze den dritten Teil mit dem neuen Datum
+        parts[2] = f"{month}-{year}"  # Ersetze den dritten Teil mit dem neuen Datum
         new_name = "_".join(parts)
         if await rename_ftp_file(selected_image_name, new_name):
-            await update.message.reply_text(f"Datum erfolgreich geändert zu: {new_date}.")
+            await update.message.reply_text(f"Datum erfolgreich geändert zu: {month}-{year}.")
         else:
             await update.message.reply_text("❌ Fehler beim Ändern des Datums.")
 
@@ -364,28 +351,12 @@ async def handle_edit_action(update: Update, context):
         else:
             new_name = selected_image_name.replace(".jpg", "_x.jpg")
         if await rename_ftp_file(selected_image_name, new_name):
-            await update.message.reply_text(f"Verfügbarkeit erfolgreich geändert zu: {'verfügbar' wenn availability_status == 'set_available' sonst 'nicht verfügbar'}.")
+            await update.message.reply_text(f"Verfügbarkeit erfolgreich geändert zu: {'verfügbar' if availability_status == 'set_available' else 'nicht verfügbar'}.")
         else:
             await update.message.reply_text("❌ Fehler beim Ändern der Verfügbarkeit.")
 
     context.user_data["edit_action"] = None  # Aktion abschließen
-    await return_to_menu(update, context)
-
-# Zurück zum Menü
-async def return_to_menu(update: Update, context):
-    query = update.callback_query
-    if query:
-        await show_image_options(query, context)
-    else:
-        await update.message.reply_text("Zurück zum Bildoptionen-Menü:", reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("1. Titel ändern", callback_data="edit_title")],
-            [InlineKeyboardButton("2. Datum ändern", callback_data="edit_date")],
-            [InlineKeyboardButton("3. Material ändern", callback_data="edit_material")],
-            [InlineKeyboardButton("4. Verfügbarkeit ändern", callback_data="edit_availability")],
-            [InlineKeyboardButton("5. Startbild festlegen", callback_data="set_start")],
-            [InlineKeyboardButton("6. Löschen", callback_data="delete")],
-            [InlineKeyboardButton("7. Fertig", callback_data="discard_changes")]
-        ]))
+    await show_image_options(update, context)  # Zurück zum Bildoptionsmenü
 
 # Hauptfunktion
 def main():
@@ -400,9 +371,9 @@ def main():
     application.add_handler(CallbackQueryHandler(edit_date, pattern="edit_date"))
     application.add_handler(CallbackQueryHandler(edit_material, pattern="edit_material"))
     application.add_handler(CallbackQueryHandler(edit_availability, pattern="edit_availability"))
-    application.add_handler(CallbackQueryHandler(select_month, pattern="month_"))
     application.add_handler(CallbackQueryHandler(set_start_image, pattern="set_start"))
     application.add_handler(CallbackQueryHandler(delete_image, pattern="delete"))
+    application.add_handler(CallbackQueryHandler(handle_month_selection, pattern="month_"))
     application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, multi_step_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_action))
