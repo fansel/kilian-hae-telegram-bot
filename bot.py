@@ -73,7 +73,7 @@ async def delete_ftp_file(file_name):
 # Start-Befehl
 async def start(update: Update, context):
     await update.message.reply_text(
-        "Hallo! Sende mir ein Bild, um es hochzuladen. Anschließend kannst du Titel, Datum, Maße und Verfügbarkeit festlegen. "
+        "Hallo! Sende mir ein Bild, um es hochzuladen. Anschließend kannst du Titel, Material, Datum und Verfügbarkeit festlegen. "
         "Verwende /help, um weitere Informationen zu erhalten."
     )
 
@@ -112,12 +112,11 @@ async def show_image_options(update: Update, context):
     keyboard = [
         [InlineKeyboardButton("1. Titel ändern", callback_data="edit_title")],
         [InlineKeyboardButton("2. Datum ändern", callback_data="edit_date")],
-        [InlineKeyboardButton("3. Maße ändern", callback_data="edit_dimensions")],
-        [InlineKeyboardButton("4. Material ändern", callback_data="edit_material")],
-        [InlineKeyboardButton("5. Verfügbarkeit ändern", callback_data="edit_availability")],
-        [InlineKeyboardButton("6. Startbild festlegen", callback_data="set_start")],
-        [InlineKeyboardButton("7. Löschen", callback_data="delete")],
-        [InlineKeyboardButton("8. Fertig", callback_data="discard_changes")]
+        [InlineKeyboardButton("3. Material ändern", callback_data="edit_material")],
+        [InlineKeyboardButton("4. Verfügbarkeit ändern", callback_data="edit_availability")],
+        [InlineKeyboardButton("5. Startbild festlegen", callback_data="set_start")],
+        [InlineKeyboardButton("6. Löschen", callback_data="delete")],
+        [InlineKeyboardButton("7. Fertig", callback_data="discard_changes")]
     ]
 
     await query.edit_message_text(
@@ -163,23 +162,22 @@ async def multi_step_handler(update: Update, context):
     if current_step == "set_title":
         # Speichere den Titel
         file_data["title"] = update.message.text.strip()
-        file_data["step"] = "set_date"  # Weiter zum nächsten Schritt
-        await update.message.reply_text("✅ Titel gespeichert. Bitte sende jetzt das Datum (z. B. 2025-01-05):")
-
-    elif current_step == "set_date":
-        # Speichere das Datum
-        file_data["date"] = update.message.text.strip()
         file_data["step"] = "set_material"  # Weiter zum nächsten Schritt
-        await update.message.reply_text("✅ Datum gespeichert. Bitte sende jetzt das Material (z. B. Leinwand):")
+        await update.message.reply_text("✅ Titel gespeichert. Bitte sende jetzt das Material (z. B. Leinwand):")
 
     elif current_step == "set_material":
         # Speichere das Material
         file_data["material"] = update.message.text.strip()
+        file_data["step"] = "set_date"  # Weiter zum nächsten Schritt
+        await update.message.reply_text("✅ Material gespeichert. Bitte sende jetzt das Datum im Format 'Monat-Jahr' (z. B. Februar-2024):")
 
+    elif current_step == "set_date":
+        # Speichere das Datum
+        file_data["date"] = update.message.text.strip()
         # Prüfen, ob alle Details ausgefüllt sind
-        if all(file_data.get(key) for key in ["title", "date", "material"]):
+        if all(file_data.get(key) for key in ["title", "material", "date"]):
             # Neuen Dateinamen erstellen
-            new_name = f"{file_data['title']}_{file_data['date']}_{file_data['material']}.jpg"
+            new_name = f"{file_data['title']}_{file_data['material']}_{file_data['date']}.jpg"
             # Datei hochladen
             if await upload_to_ftp(file_data["file_path"], new_name):
                 await update.message.reply_text(f"✅ Alle Details gespeichert und Bild hochgeladen: {new_name}")
@@ -203,13 +201,7 @@ async def edit_date(update: Update, context):
     query = update.callback_query
     await query.answer()
     context.user_data["edit_action"] = "date"
-    await query.edit_message_text("Bitte sende das neue Datum für das Bild (z. B. 2025-01-05).")
-
-async def edit_dimensions(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-    context.user_data["edit_action"] = "dimensions"
-    await query.edit_message_text("Bitte sende die neuen Maße im Format 'Breite x Höhe'.")
+    await query.edit_message_text("Bitte sende das neue Datum im Format 'Monat-Jahr' (z. B. Februar-2024).")
 
 async def edit_material(update: Update, context):
     query = update.callback_query
@@ -309,36 +301,20 @@ async def handle_edit_action(update: Update, context):
         if len(parts) < 3:
             await update.message.reply_text("❌ Fehler: Dateiname hat ein unerwartetes Format.")
             return
-        parts[1] = new_date  # Ersetze den zweiten Teil mit dem neuen Datum
+        parts[2] = new_date  # Ersetze den dritten Teil mit dem neuen Datum
         new_name = "_".join(parts)
         if await rename_ftp_file(selected_image_name, new_name):
             await update.message.reply_text(f"Datum erfolgreich geändert zu: {new_date}.")
         else:
             await update.message.reply_text("❌ Fehler beim Ändern des Datums.")
 
-    elif edit_action == "dimensions":
-        new_dimensions = update.message.text.strip()
-        if "x" not in new_dimensions:
-            await update.message.reply_text("Ungültiges Format. Bitte sende die Maße im Format 'Breite x Höhe'.")
-            return
-        parts = selected_image_name.split("_")
-        if len(parts) < 4:
-            await update.message.reply_text("❌ Fehler: Dateiname hat ein unerwartetes Format.")
-            return
-        parts[2] = new_dimensions  # Ersetze den dritten Teil mit den neuen Maßen
-        new_name = "_".join(parts)
-        if await rename_ftp_file(selected_image_name, new_name):
-            await update.message.reply_text(f"Maße erfolgreich geändert zu: {new_dimensions}.")
-        else:
-            await update.message.reply_text("❌ Fehler beim Ändern der Maße.")
-
     elif edit_action == "material":
         new_material = update.message.text.strip()
         parts = selected_image_name.split("_")
-        if len(parts) < 4:
+        if len(parts) < 3:
             await update.message.reply_text("❌ Fehler: Dateiname hat ein unerwartetes Format.")
             return
-        parts[3] = new_material  # Ersetze den vierten Teil mit dem neuen Material
+        parts[1] = new_material  # Ersetze den zweiten Teil mit dem neuen Material
         new_name = "_".join(parts)
         if await rename_ftp_file(selected_image_name, new_name):
             await update.message.reply_text(f"Material erfolgreich geändert zu: {new_material}.")
@@ -347,14 +323,12 @@ async def handle_edit_action(update: Update, context):
 
     elif edit_action == "availability":
         availability_status = update.callback_query.data
-        parts = selected_image_name.split("_")
-        if "_x" in parts[-1]:
-            parts[-1] = "" if availability_status == "set_available" else "_x"
+        if availability_status == "set_available":
+            new_name = selected_image_name.replace("_x", "")
         else:
-            parts[-1] = "_x" if availability_status == "set_unavailable" else ""
-        new_name = "_".join(parts).strip("_")
+            new_name = selected_image_name.replace(".jpg", "_x.jpg")
         if await rename_ftp_file(selected_image_name, new_name):
-            await update.message.reply_text(f"Verfügbarkeit erfolgreich geändert zu: {availability_status}.")
+            await update.message.reply_text(f"Verfügbarkeit erfolgreich geändert zu: {'verfügbar' if availability_status == 'set_available' else 'nicht verfügbar'}.")
         else:
             await update.message.reply_text("❌ Fehler beim Ändern der Verfügbarkeit.")
 
@@ -371,7 +345,6 @@ def main():
     application.add_handler(CallbackQueryHandler(show_image_options, pattern="select_"))
     application.add_handler(CallbackQueryHandler(edit_title, pattern="edit_title"))
     application.add_handler(CallbackQueryHandler(edit_date, pattern="edit_date"))
-    application.add_handler(CallbackQueryHandler(edit_dimensions, pattern="edit_dimensions"))
     application.add_handler(CallbackQueryHandler(edit_material, pattern="edit_material"))
     application.add_handler(CallbackQueryHandler(edit_availability, pattern="edit_availability"))
     application.add_handler(CallbackQueryHandler(set_start_image, pattern="set_start"))
