@@ -1,12 +1,17 @@
 import asyncio
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 import aioftp
 import os
+import logging
+
+# Logging konfigurieren
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Konfigurationsparameter
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-WEBURL = os.getenv("WEBURL")
+WEBURL = os.getenv("WEBURL").rstrip("/")
 FTP_HOST = os.getenv("FTP_HOST")
 FTP_USER = os.getenv("FTP_USER")
 FTP_PASS = os.getenv("FTP_PASS")
@@ -14,15 +19,19 @@ FTP_UPLOAD_DIR = "/www/gallery"
 LOCAL_DOWNLOAD_PATH = "./downloads/"
 os.makedirs(LOCAL_DOWNLOAD_PATH, exist_ok=True)
 
-# Temporäre Speicherung von Benutzerdaten
-user_data = {}
-
 # FastAPI-App für Statusseite
 app = FastAPI()
 
 @app.get("/")
 async def index():
     return {"status": "✅ Bot läuft!"}
+
+@app.post(f"/{BOT_TOKEN}")
+async def telegram_webhook(request: Request):
+    application = Application.builder().token(BOT_TOKEN).build()
+    update = await request.json()
+    await application.update_queue.put(update)
+    return {"status": "ok"}
 
 # Telegram-Bot-Funktionen
 async def upload_to_ftp(local_path, file_name):
@@ -35,7 +44,7 @@ async def upload_to_ftp(local_path, file_name):
         await client.quit()
         return True
     except Exception as e:
-        print(f"FTP-Upload-Fehler: {e}")
+        logger.error(f"FTP-Upload-Fehler: {e}")
         return False
 
 async def start(update, context):
@@ -90,9 +99,9 @@ async def configure_webhook(application):
     webhook_url = f"{WEBURL}/{BOT_TOKEN}"
     success = await application.bot.set_webhook(webhook_url)
     if success:
-        print(f"Webhook gesetzt: {webhook_url}")
+        logger.info(f"Webhook gesetzt: {webhook_url}")
     else:
-        print("Fehler beim Setzen des Webhooks.")
+        logger.error("Fehler beim Setzen des Webhooks.")
 
 async def start_bot():
     application = Application.builder().token(BOT_TOKEN).build()
@@ -114,4 +123,5 @@ if __name__ == "__main__":
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
 
-    uvicorn.run("bot:app", host="0.0.0.0", port=5000)
+    port = int(os.getenv("PORT", 5000))
+    uvicorn.run("bot:app", host="0.0.0.0", port=port)
