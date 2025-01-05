@@ -128,27 +128,26 @@ if __name__ == "__main__":
             logger.error("Fehler beim Setzen des Webhooks.")
 
         # Webhook-Server starten
-        await application.run_webhook(
-            listen="0.0.0.0",
-            port=int(os.getenv("PORT", 8443)),
-            url_path=BOT_TOKEN,
-        )
-
-    async def keep_running():
-        """Hält den Event-Loop aktiv."""
-        stop_event = asyncio.Event()
         try:
-            await stop_event.wait()  # Wartet auf ein Signal, um zu beenden
-        except KeyboardInterrupt:
-            logger.info("Beenden erkannt. Stoppe Event-Loop.")
+            await application.run_webhook(
+                listen="0.0.0.0",
+                port=int(os.getenv("PORT", 8443)),
+                url_path=BOT_TOKEN,
+            )
+        finally:
+            await application.shutdown()
 
     try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            logger.warning("Event-Loop läuft bereits. Starte main() als Task.")
-            loop.create_task(main())
-            loop.run_until_complete(keep_running())
-        else:
-            asyncio.run(main())
+        # Prüfe, ob ein Event-Loop bereits läuft
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        # Hauptaufgabe starten
+        loop.run_until_complete(main())
+    except KeyboardInterrupt:
+        logger.info("Beenden erkannt. Event-Loop wird geschlossen.")
     except Exception as e:
         logger.error(f"Unbehandelter Fehler: {e}")
