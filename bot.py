@@ -15,14 +15,19 @@ os.makedirs(LOCAL_DOWNLOAD_PATH, exist_ok=True)
 
 user_data = {}
 
+# Hilfsfunktion: FTP-Verbindung
+async def ftp_connect():
+    client = aioftp.Client()
+    await client.connect(FTP_HOST)
+    await client.login(FTP_USER, FTP_PASS)
+    await client.change_directory(FTP_UPLOAD_DIR)
+    return client
+
 # Hilfsfunktion: Datei auf FTP hochladen
-async def upload_to_ftp(local_path, file_name):
+async def upload_to_ftp(local_path, new_name):
     try:
-        client = aioftp.Client()
-        await client.connect(FTP_HOST)
-        await client.login(FTP_USER, FTP_PASS)
-        await client.change_directory(FTP_UPLOAD_DIR)
-        await client.upload(local_path)
+        client = await ftp_connect()
+        await client.upload(local_path, new_name)
         await client.quit()
         return True
     except Exception as e:
@@ -32,10 +37,7 @@ async def upload_to_ftp(local_path, file_name):
 # Hilfsfunktion: Dateien von FTP auflisten
 async def list_ftp_files():
     try:
-        client = aioftp.Client()
-        await client.connect(FTP_HOST)
-        await client.login(FTP_USER, FTP_PASS)
-        await client.change_directory(FTP_UPLOAD_DIR)
+        client = await ftp_connect()
         files = []
         async for path, info in client.list(FTP_UPLOAD_DIR):
             if info["type"] == "file":
@@ -45,6 +47,28 @@ async def list_ftp_files():
     except Exception as e:
         print(f"Fehler beim Abrufen der Dateien: {e}")
         return []
+
+# Hilfsfunktion: Datei auf FTP umbenennen
+async def rename_ftp_file(old_name, new_name):
+    try:
+        client = await ftp_connect()
+        await client.rename(old_name, new_name)
+        await client.quit()
+        return True
+    except Exception as e:
+        print(f"Fehler beim Umbenennen der Datei auf dem FTP-Server: {e}")
+        return False
+
+# Hilfsfunktion: Datei auf FTP löschen
+async def delete_ftp_file(file_name):
+    try:
+        client = await ftp_connect()
+        await client.remove_file(file_name)
+        await client.quit()
+        return True
+    except Exception as e:
+        print(f"Fehler beim Löschen der Datei auf dem FTP-Server: {e}")
+        return False
 
 # Start-Befehl
 async def start(update: Update, context):
@@ -101,6 +125,7 @@ async def show_image_options(update: Update, context):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
+# Foto-Handler
 async def photo_handler(update: Update, context):
     chat_id = update.message.chat.id
     status = await update.message.reply_text("📥 Herunterladen des Bildes...")
@@ -122,6 +147,8 @@ async def photo_handler(update: Update, context):
     except Exception as e:
         print(f"Fehler beim Herunterladen: {e}")
         await status.edit_text("❌ Fehler beim Herunterladen des Bildes.")
+
+# Multi-Step-Handler
 async def multi_step_handler(update: Update, context):
     chat_id = update.message.chat.id
     file_data = user_data.get(chat_id)
@@ -150,7 +177,7 @@ async def multi_step_handler(update: Update, context):
         file_data["material"] = update.message.text.strip()
 
         # Prüfen, ob alle Details ausgefüllt sind
-        if all(file_data[key] for key in ["title", "date", "material"]):
+        if all(file_data.get(key) for key in ["title", "date", "material"]):
             # Neuen Dateinamen erstellen
             new_name = f"{file_data['title']}_{file_data['date']}_{file_data['material']}.jpg"
             # Datei hochladen
@@ -165,492 +192,89 @@ async def multi_step_handler(update: Update, context):
     else:
         await update.message.reply_text("❌ Unbekannter Schritt. Bitte starte erneut mit dem Hochladen eines Bildes.")
 
-
-# Maße bearbeiten
-async def edit_dimensions(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-
-    context.user_data["edit_action"] = "dimensions"
-    await query.edit_message_text("Bitte sende die neuen Maße im Format 'Breite x Höhe'.")
-
-async def edit_availability(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-
-    chat_id = update.effective_chat.id
-    file_data = user_data.get(chat_id)
-
-    if not file_data:
-        await query.edit_message_text("❌ Kein Bild ausgewählt.")
-        return
-
-    old_name = file_data["file_name"]
-    base_name, ext = os.path.splitext(old_name)
-
-    # Verfügbarkeitsstatus bestimmen
-    if "_x" in base_name:
-        availability = "nicht verfügbar"
-        new_availability = "verfügbar"
-    else:
-        availability = "verfügbar"
-        new_availability = "nicht verfügbar"
-
-    # Bestätigungs-Keyboard
-    keyboard = [
-        [InlineKeyboardButton("Ja, ändern", callback_data="confirm_availability")],
-        [InlineKeyboardButton("Nein, zurück", callback_data="cancel_availability")],
-    ]
-
-    # Verfügbarkeitsstatus anzeigen und Änderung vorschlagen
-    context.user_data["edit_availability"] = {
-        "old_name": old_name,
-        "new_name": base_name.replace("_x", "") + ext if "_x" in base_name else base_name + "_x" + ext,
-        "new_status": new_availability,
-    }
-    await query.edit_message_text(
-        f"📂 Der aktuelle Status ist: {availability}.\n"
-        f"Möchtest du den Status auf {new_availability} ändern?",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-    )
-async def confirm_availability(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-
-    edit_data = context.user_data.get("edit_availability")
-    if not edit_data:
-        await query.edit_message_text("❌ Fehler: Keine Verfügbarkeitsänderung gefunden.")
-        return
-
-    old_name = edit_data["old_name"]
-    new_name = edit_data["new_name"]
-    new_status = edit_data["new_status"]
-
-    # Datei umbenennen
-    if await rename_ftp_file(old_name, new_name):
-        # Aktualisiere Benutzerdaten
-        chat_id = update.effective_chat.id
-        user_data[chat_id]["file_name"] = new_name
-        await query.edit_message_text(f"✅ Verfügbarkeit erfolgreich geändert zu: {new_status}.")
-
-        # Kontextmenü erneut anzeigen
-        await show_image_options(update, context)
-    else:
-        await query.edit_message_text("❌ Fehler beim Ändern der Verfügbarkeit.")
-
-    async def rename_ftp_file(old_name, new_name):
-        """
-        Benennt eine Datei auf dem FTP-Server um.
-
-        :param old_name: Aktueller Name der Datei auf dem Server (inklusive Pfad).
-        :param new_name: Neuer Name der Datei auf dem Server (inklusive Pfad).
-        :return: True, wenn das Umbenennen erfolgreich war, False bei Fehlern.
-        """
-        try:
-            client = aioftp.Client()
-            # Verbindung herstellen
-            await client.connect(FTP_HOST)
-            await client.login(FTP_USER, FTP_PASS)
-            
-            # Datei umbenennen
-            await client.rename(old_name, new_name)
-            
-            # Verbindung beenden
-            await client.quit()
-            return True
-        except Exception as e:
-            print(f"Fehler beim Umbenennen der Datei auf dem FTP-Server: {e}")
-            return False
-
-async def change_title_on_ftp(update: Update, context):
-    chat_id = update.message.chat.id
-    file_data = user_data.get(chat_id)
-
-    if not file_data:
-        await update.message.reply_text("❌ Kein Bild ausgewählt.")
-        return
-
-    # Alter Name und neuer Titel
-    old_name = file_data["file_name"]
-    new_title = file_data.get("title", "").replace(" ", "_")  # Leerzeichen durch Unterstriche ersetzen
-    parts = old_name.split("_")
-
-    if len(parts) < 3:
-        await update.message.reply_text("❌ Fehler: Dateiname hat ein unerwartetes Format.")
-        return
-
-    # Neuen Dateinamen erstellen
-    parts[0] = new_title  # Ersetze den ersten Teil mit dem neuen Titel
-    new_name = "_".join(parts)
-
-    try:
-        # Verbindung zum FTP-Server herstellen und Datei umbenennen
-        client = aioftp.Client()
-        await client.connect(FTP_HOST)
-        await client.login(FTP_USER, FTP_PASS)
-        await client.rename(
-            os.path.join(FTP_UPLOAD_DIR, old_name),
-            os.path.join(FTP_UPLOAD_DIR, new_name)
-        )
-        await client.quit()
-
-        # Aktualisiere den Dateinamen
-        file_data["file_name"] = new_name
-        await update.message.reply_text(f"✅ Titel erfolgreich geändert zu: {new_title.replace('_', ' ')}")
-
-    except Exception as e:
-        print(f"Fehler beim Ändern des Titels auf dem FTP-Server: {e}")
-        await update.message.reply_text("❌ Fehler beim Ändern des Titels auf dem Server.")
-async def change_date_on_ftp(update: Update, context):
-    chat_id = update.message.chat.id
-    file_data = user_data.get(chat_id)
-
-    if not file_data:
-        await update.message.reply_text("❌ Kein Bild ausgewählt.")
-        return
-
-    # Alter Name und neues Datum
-    old_name = file_data["file_name"]
-    new_date = file_data.get("date", "").replace(" ", "-")  # Leerzeichen durch Bindestriche ersetzen
-    parts = old_name.split("_")
-
-    if len(parts) < 3:
-        await update.message.reply_text("❌ Fehler: Dateiname hat ein unerwartetes Format.")
-        return
-
-    # Neuen Dateinamen erstellen
-    parts[2] = new_date  # Ersetze den dritten Teil mit dem neuen Datum
-    new_name = "_".join(parts)
-
-    try:
-        # Verbindung zum FTP-Server herstellen und Datei umbenennen
-        client = aioftp.Client()
-        await client.connect(FTP_HOST)
-        await client.login(FTP_USER, FTP_PASS)
-        await client.rename(
-            os.path.join(FTP_UPLOAD_DIR, old_name),
-            os.path.join(FTP_UPLOAD_DIR, new_name)
-        )
-        await client.quit()
-
-        # Aktualisiere den Dateinamen
-        file_data["file_name"] = new_name
-        await update.message.reply_text(f"✅ Datum erfolgreich geändert zu: {new_date}")
-
-    except Exception as e:
-        print(f"Fehler beim Ändern des Datums auf dem FTP-Server: {e}")
-        await update.message.reply_text("❌ Fehler beim Ändern des Datums auf dem Server.")
-async def change_dimensions_on_ftp(update: Update, context):
-    chat_id = update.message.chat.id
-    file_data = user_data.get(chat_id)
-
-    if not file_data:
-        await update.message.reply_text("❌ Kein Bild ausgewählt.")
-        return
-
-    # Alter Name und neue Maße
-    old_name = file_data["file_name"]
-    new_dimensions = file_data.get("dimensions", "default_dimensions").replace(" ", "")  # Leerzeichen entfernen
-    parts = old_name.split("_")
-
-    if len(parts) < 4:
-        await update.message.reply_text("❌ Fehler: Dateiname hat ein unerwartetes Format.")
-        return
-
-    # Neuen Dateinamen erstellen
-    parts[3] = new_dimensions  # Ersetze den vierten Teil mit den neuen Maßen
-    new_name = "_".join(parts)
-
-    try:
-        # Verbindung zum FTP-Server herstellen und Datei umbenennen
-        client = aioftp.Client()
-        await client.connect(FTP_HOST)
-        await client.login(FTP_USER, FTP_PASS)
-        await client.rename(
-            os.path.join(FTP_UPLOAD_DIR, old_name),
-            os.path.join(FTP_UPLOAD_DIR, new_name)
-        )
-        await client.quit()
-
-        # Aktualisiere den Dateinamen und die Maße in den Benutzerdaten
-        file_data["file_name"] = new_name
-        file_data["dimensions"] = new_dimensions
-
-        # Erfolgsmeldung an den Benutzer
-        await update.message.reply_text(f"✅ Maße erfolgreich geändert zu: {new_dimensions}")
-
-    except Exception as e:
-        print(f"Fehler beim Ändern der Maße auf dem FTP-Server: {e}")
-        await update.message.reply_text("❌ Fehler beim Ändern der Maße auf dem Server.")
-        
-async def cancel_availability(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-
-    # Kontextmenü erneut anzeigen
-    await show_image_options(update, context)
-
-async def set_start_image(update: Update, context):
-    chat_id = update.message.chat.id
-    file_data = user_data.get(chat_id)
-
-    if not file_data:
-        await update.message.reply_text("❌ Kein Bild ausgewählt.")
-        return
-
-    old_name = file_data["file_name"]
-    base_name, ext = os.path.splitext(old_name)
-
-    # Prüfen, ob `_S` bereits vorhanden ist
-    if "_S" in base_name:
-        await update.message.reply_text("✅ Dieses Bild ist bereits als Startbild festgelegt.")
-        return
-
-    # Umgang mit `_x` im Dateinamen
-    if "_x" in base_name:
-        # Füge `_S` direkt vor `_x` ein
-        new_name = base_name.replace("_x", "_S_x") + ext
-    else:
-        # Hänge `_S` an, wenn `_x` nicht existiert
-        new_name = base_name + "_S" + ext
-
-    try:
-        # Verbindung zum FTP-Server herstellen und Datei umbenennen
-        client = aioftp.Client()
-        await client.connect(FTP_HOST)
-        await client.login(FTP_USER, FTP_PASS)
-        await client.rename(
-            os.path.join(FTP_UPLOAD_DIR, old_name),
-            os.path.join(FTP_UPLOAD_DIR, new_name)
-        )
-        await client.quit()
-
-        # Aktualisiere den Dateinamen in den Benutzerdaten
-        file_data["file_name"] = new_name
-        await update.message.reply_text(f"✅ Startbild erfolgreich festgelegt: {new_name}")
-
-    except Exception as e:
-        print(f"Fehler beim Festlegen des Startbildes auf dem FTP-Server: {e}")
-        await update.message.reply_text("❌ Fehler beim Festlegen des Startbildes auf dem Server.")
-
-# Startbild festlegen
-async def set_start_image(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-
-    files = await list_ftp_files()
-    # Entferne _S vom alten Startbild
-    try:
-        client = aioftp.Client()
-        await client.connect(FTP_HOST)
-        await client.login(FTP_USER, FTP_PASS)
-
-        for file in files:
-            if file.endswith("_S.jpg"):
-                base_name, ext = os.path.splitext(file)
-                new_name = f"{base_name.replace('_S', '')}{ext}"
-                await client.rename(
-                    os.path.join(FTP_UPLOAD_DIR, file),
-                    os.path.join(FTP_UPLOAD_DIR, new_name)
-                )
-
-        # Neues Startbild setzen
-        selected_image_index = context.user_data.get("selected_image_index")
-        selected_image_name = files[selected_image_index]
-        base_name, ext = os.path.splitext(selected_image_name)
-        new_start_name = f"{base_name}_S{ext}"
-
-        await client.rename(
-            os.path.join(FTP_UPLOAD_DIR, selected_image_name),
-            os.path.join(FTP_UPLOAD_DIR, new_start_name)
-        )
-        await client.quit()
-
-        await query.edit_message_text(f"Startbild erfolgreich gesetzt: {new_start_name}.")
-    except Exception as e:
-        await query.edit_message_text(f"Fehler beim Setzen des Startbildes: {e}")
-
-# Löschen eines Bildes
-async def delete_image(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-
-    selected_image_index = context.user_data.get("selected_image_index")
-    files = await list_ftp_files()
-    selected_image_name = files[selected_image_index]
-
-    # Bestätigungsdialog
-    keyboard = [
-        [InlineKeyboardButton("Ja, löschen", callback_data="confirm_delete")],
-        [InlineKeyboardButton("Nein, abbrechen", callback_data="cancel_delete")]
-    ]
-    context.user_data["delete_target"] = selected_image_name
-    await query.edit_message_text(
-        f"Möchtest du das Bild '{selected_image_name}' wirklich löschen?",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
-async def confirm_delete(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-
-    delete_target = context.user_data.get("delete_target")
-
-    # Bild löschen
-    try:
-        client = aioftp.Client()
-        await client.connect(FTP_HOST)
-        await client.login(FTP_USER, FTP_PASS)
-        await client.remove_file(os.path.join(FTP_UPLOAD_DIR, delete_target))
-        await client.quit()
-
-        await query.edit_message_text(f"Bild '{delete_target}' wurde gelöscht.")
-    except Exception as e:
-        await query.edit_message_text(f"Fehler beim Löschen: {e}")
-
-async def cancel_delete(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("Löschvorgang abgebrochen.")
-
-# Titel festlegen
-async def set_title(update: Update, context):
+# Bearbeitungsfunktionen
+async def edit_title(update: Update, context):
     query = update.callback_query
     await query.answer()
     context.user_data["edit_action"] = "title"
     await query.edit_message_text("Bitte sende den neuen Titel für das Bild.")
 
-# Material bearbeiten
+async def edit_date(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+    context.user_data["edit_action"] = "date"
+    await query.edit_message_text("Bitte sende das neue Datum für das Bild (z. B. 2025-01-05).")
+
+async def edit_dimensions(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+    context.user_data["edit_action"] = "dimensions"
+    await query.edit_message_text("Bitte sende die neuen Maße im Format 'Breite x Höhe'.")
+
 async def edit_material(update: Update, context):
     query = update.callback_query
     await query.answer()
     context.user_data["edit_action"] = "material"
     await query.edit_message_text("Bitte sende das neue Material für das Bild.")
 
-# Datum bearbeiten
-async def edit_date(update: Update, context):
+async def edit_availability(update: Update, context):
     query = update.callback_query
     await query.answer()
-
-    # Monatsauswahl
+    context.user_data["edit_action"] = "availability"
     keyboard = [
-        [InlineKeyboardButton("Januar", callback_data="month_Januar"), InlineKeyboardButton("Februar", callback_data="month_Februar")],
-        [InlineKeyboardButton("März", callback_data="month_März"), InlineKeyboardButton("April", callback_data="month_April")],
-        [InlineKeyboardButton("Mai", callback_data="month_Mai"), InlineKeyboardButton("Juni", callback_data="month_Juni")],
-        [InlineKeyboardButton("Juli", callback_data="month_Juli"), InlineKeyboardButton("August", callback_data="month_August")],
-        [InlineKeyboardButton("September", callback_data="month_September"), InlineKeyboardButton("Oktober", callback_data="month_Oktober")],
-        [InlineKeyboardButton("November", callback_data="month_November"), InlineKeyboardButton("Dezember", callback_data="month_Dezember")],
-        [InlineKeyboardButton("Kein Monat", callback_data="month_None")]
+        [InlineKeyboardButton("Verfügbar", callback_data="set_available")],
+        [InlineKeyboardButton("Nicht verfügbar", callback_data="set_unavailable")],
     ]
+    await query.edit_message_text("Bitte wähle die Verfügbarkeit aus:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-    await query.edit_message_text(
-        "Bitte wähle den Monat:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-# Änderungen abschließen
-async def finish_config(update: Update, context):
+async def set_start_image(update: Update, context):
     query = update.callback_query
     await query.answer()
-    
-    # Hier könnte Logik stehen, um Änderungen auf dem FTP zu bestätigen, falls erforderlich
-    context.user_data.clear()  # User-Daten zurücksetzen
-    await query.edit_message_text("Änderungen wurden erfolgreich abgeschlossen.")
+    context.user_data["edit_action"] = "start_image"
+    await query.edit_message_text("Startbild wird festgelegt...")
 
-# Änderungen verwerfen
-async def discard_changes(update: Update, context):
+    files = await list_ftp_files()
+    old_start_image = None
+    for file in files:
+        if "_S" in file:
+            old_start_image = file
+            break
+
+    # Neuen Startbildnamen erstellen
+    selected_image_index = context.user_data.get("selected_image_index")
+    selected_image_name = files[selected_image_index]
+    base_name, ext = os.path.splitext(selected_image_name)
+    new_start_name = f"{base_name}_S{ext}"
+
+    try:
+        client = await ftp_connect()
+        if old_start_image:
+            await client.rename(old_start_image, old_start_image.replace("_S", ""))
+        await client.rename(selected_image_name, new_start_name)
+        await client.quit()
+        await query.edit_message_text(f"Startbild erfolgreich gesetzt: {new_start_name}.")
+    except Exception as e:
+        await query.edit_message_text(f"Fehler beim Setzen des Startbildes: {e}")
+
+async def delete_image(update: Update, context):
     query = update.callback_query
     await query.answer()
+    context.user_data["edit_action"] = "delete"
+    await query.edit_message_text("Bild wird gelöscht...")
 
-    # User-Daten verwerfen
-    context.user_data.clear()
-    await query.edit_message_text("Alle Änderungen wurden verworfen.")
+    selected_image_index = context.user_data.get("selected_image_index")
+    files = await list_ftp_files()
+    selected_image_name = files[selected_image_index]
 
-# Monat auswählen und Jahr festlegen
-async def select_month(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-
-    selected_month = query.data.split("_")[1]
-    context.user_data["selected_month"] = selected_month
-
-    await query.edit_message_text(f"Monat '{selected_month}' ausgewählt. Bitte sende jetzt das Jahr (z. B. 2025).")
-    context.user_data["edit_action"] = "year"
-
-# Jahr eingeben
-async def set_year(update: Update, context):
-    year = update.message.text.strip()
-    context.user_data["selected_year"] = year
-    selected_month = context.user_data.get("selected_month", "None")
-    await update.message.reply_text(f"Datum gespeichert: {selected_month} {year}.")
-    await return_to_menu(update, context)
-
-# Änderungen abschließen
-async def confirm_changes(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("Alle Änderungen wurden erfolgreich gespeichert.")
-    context.user_data.clear()
-
-# Änderungen verwerfen
-async def discard_changes(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-    await query.edit_message_text("Alle Änderungen wurden verworfen.")
-    context.user_data.clear()
-
-# Hauptmenü erneut anzeigen
-async def return_to_menu(update: Update, context):
-    """
-    Kehrt zurück zum Bildoptionen-Menü, nachdem eine Aktion abgeschlossen wurde.
-    Löscht vorherige Nachrichten, wenn möglich.
-    """
-    query = update.callback_query
-
-    # Wenn es eine CallbackQuery gibt, bestätigen wir die Aktion.
-    if query:
-        await query.answer()
-
-    # Nachricht löschen, wenn aus Text-Handler aufgerufen
-    if update.message:
-        try:
-            await update.message.delete()
-        except Exception as e:
-            print(f"Fehler beim Löschen der Nachricht: {e}")
-
-    selected_image_index = context.user_data.get("selected_image_index", None)
-    if selected_image_index is None:
-        await update.message.reply_text("Kein Bild ausgewählt. Bitte wähle ein Bild aus der Liste aus.")
-        return
-
-    # Hauptmenü anzeigen
-    keyboard = [
-        [InlineKeyboardButton("1. Titel ändern", callback_data="edit_title")],
-        [InlineKeyboardButton("2. Datum ändern", callback_data="edit_date")],
-        [InlineKeyboardButton("3. Maße ändern", callback_data="edit_dimensions")],
-        [InlineKeyboardButton("4. Material ändern", callback_data="edit_material")],
-        [InlineKeyboardButton("5. Verfügbarkeit ändern", callback_data="edit_availability")],
-        [InlineKeyboardButton("6. Startbild festlegen", callback_data="set_start")],
-        [InlineKeyboardButton("7. Löschen", callback_data="delete")],
-        [InlineKeyboardButton("8. Änderungen abschließen", callback_data="confirm_changes")],
-        [InlineKeyboardButton("9. Änderungen verwerfen", callback_data="discard_changes")]
-    ]
-
-    # Hauptmenü senden
-    if query:
-        await query.edit_message_text(
-            "Was möchtest du tun?",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+    if await delete_ftp_file(selected_image_name):
+        await query.edit_message_text(f"Bild '{selected_image_name}' wurde erfolgreich gelöscht.")
     else:
-        await update.message.reply_text(
-            "Was möchtest du tun?",
-            reply_markup=InlineKeyboardMarkup(keyboard)
-        )
+        await query.edit_message_text(f"Fehler beim Löschen des Bildes '{selected_image_name}'.")
 
-
-async def text_handler(update: Update, context):
+# Änderungs-Handler
+async def handle_edit_action(update: Update, context):
     chat_id = update.message.chat.id
-    edit_action = context.user_data.get("edit_action", None)
+    edit_action = context.user_data.get("edit_action")
 
     if not edit_action:
         await update.message.reply_text("Es wurde keine Bearbeitungsaktion gestartet. Bitte wähle zuerst eine Option aus dem Menü.")
@@ -662,42 +286,79 @@ async def text_handler(update: Update, context):
     except Exception as e:
         print(f"Fehler beim Löschen der Nachricht: {e}")
 
+    selected_image_index = context.user_data.get("selected_image_index")
+    files = await list_ftp_files()
+    selected_image_name = files[selected_image_index]
+
     if edit_action == "title":
         new_title = update.message.text.strip()
-        # Logik zum Speichern des neuen Titels hier hinzufügen
-        await update.message.reply_text(f"Titel geändert zu: {new_title}.")
-        context.user_data["edit_action"] = None  # Aktion abschließen
-        await return_to_menu(update, context)
+        parts = selected_image_name.split("_")
+        if len(parts) < 3:
+            await update.message.reply_text("❌ Fehler: Dateiname hat ein unerwartetes Format.")
+            return
+        parts[0] = new_title  # Ersetze den ersten Teil mit dem neuen Titel
+        new_name = "_".join(parts)
+        if await rename_ftp_file(selected_image_name, new_name):
+            await update.message.reply_text(f"Titel erfolgreich geändert zu: {new_title}.")
+        else:
+            await update.message.reply_text("❌ Fehler beim Ändern des Titels.")
 
-    elif edit_action == "material":
-        new_material = update.message.text.strip()
-        # Logik zum Speichern des neuen Materials hier hinzufügen
-        await update.message.reply_text(f"Material geändert zu: {new_material}.")
-        context.user_data["edit_action"] = None  # Aktion abschließen
-        await return_to_menu(update, context)
+    elif edit_action == "date":
+        new_date = update.message.text.strip()
+        parts = selected_image_name.split("_")
+        if len(parts) < 3:
+            await update.message.reply_text("❌ Fehler: Dateiname hat ein unerwartetes Format.")
+            return
+        parts[1] = new_date  # Ersetze den zweiten Teil mit dem neuen Datum
+        new_name = "_".join(parts)
+        if await rename_ftp_file(selected_image_name, new_name):
+            await update.message.reply_text(f"Datum erfolgreich geändert zu: {new_date}.")
+        else:
+            await update.message.reply_text("❌ Fehler beim Ändern des Datums.")
 
     elif edit_action == "dimensions":
         new_dimensions = update.message.text.strip()
         if "x" not in new_dimensions:
             await update.message.reply_text("Ungültiges Format. Bitte sende die Maße im Format 'Breite x Höhe'.")
             return
+        parts = selected_image_name.split("_")
+        if len(parts) < 4:
+            await update.message.reply_text("❌ Fehler: Dateiname hat ein unerwartetes Format.")
+            return
+        parts[2] = new_dimensions  # Ersetze den dritten Teil mit den neuen Maßen
+        new_name = "_".join(parts)
+        if await rename_ftp_file(selected_image_name, new_name):
+            await update.message.reply_text(f"Maße erfolgreich geändert zu: {new_dimensions}.")
+        else:
+            await update.message.reply_text("❌ Fehler beim Ändern der Maße.")
 
-        # Logik zum Speichern der neuen Maße hier hinzufügen
-        await update.message.reply_text(f"Maße geändert zu: {new_dimensions}.")
-        context.user_data["edit_action"] = None  # Aktion abschließen
-        await return_to_menu(update, context)
+    elif edit_action == "material":
+        new_material = update.message.text.strip()
+        parts = selected_image_name.split("_")
+        if len(parts) < 4:
+            await update.message.reply_text("❌ Fehler: Dateiname hat ein unerwartetes Format.")
+            return
+        parts[3] = new_material  # Ersetze den vierten Teil mit dem neuen Material
+        new_name = "_".join(parts)
+        if await rename_ftp_file(selected_image_name, new_name):
+            await update.message.reply_text(f"Material erfolgreich geändert zu: {new_material}.")
+        else:
+            await update.message.reply_text("❌ Fehler beim Ändern des Materials.")
 
-    elif edit_action == "year":
-        year = update.message.text.strip()
-        selected_month = context.user_data.get("selected_month", "None")
-        await update.message.reply_text(f"Datum gespeichert: {selected_month} {year}.")
-        context.user_data["edit_action"] = None  # Aktion abschließen
-        await return_to_menu(update, context)
+    elif edit_action == "availability":
+        availability_status = update.callback_query.data
+        parts = selected_image_name.split("_")
+        if "_x" in parts[-1]:
+            parts[-1] = "" if availability_status == "set_available" else "_x"
+        else:
+            parts[-1] = "_x" if availability_status == "set_unavailable" else ""
+        new_name = "_".join(parts).strip("_")
+        if await rename_ftp_file(selected_image_name, new_name):
+            await update.message.reply_text(f"Verfügbarkeit erfolgreich geändert zu: {availability_status}.")
+        else:
+            await update.message.reply_text("❌ Fehler beim Ändern der Verfügbarkeit.")
 
-    else:
-        await update.message.reply_text("Unbekannte Aktion. Bitte wähle erneut aus dem Menü.")
-
-
+    context.user_data["edit_action"] = None  # Aktion abschließen
 
 # Hauptfunktion
 def main():
@@ -708,25 +369,16 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("list", list_images))
     application.add_handler(CallbackQueryHandler(show_image_options, pattern="select_"))
-    application.add_handler(CallbackQueryHandler(set_title, pattern="edit_title"))
+    application.add_handler(CallbackQueryHandler(edit_title, pattern="edit_title"))
     application.add_handler(CallbackQueryHandler(edit_date, pattern="edit_date"))
     application.add_handler(CallbackQueryHandler(edit_dimensions, pattern="edit_dimensions"))
     application.add_handler(CallbackQueryHandler(edit_material, pattern="edit_material"))
     application.add_handler(CallbackQueryHandler(edit_availability, pattern="edit_availability"))
     application.add_handler(CallbackQueryHandler(set_start_image, pattern="set_start"))
     application.add_handler(CallbackQueryHandler(delete_image, pattern="delete"))
-    application.add_handler(CallbackQueryHandler(confirm_delete, pattern="confirm_delete"))
-    application.add_handler(CallbackQueryHandler(cancel_delete, pattern="cancel_delete"))
-    application.add_handler(CallbackQueryHandler(select_month, pattern="month_"))
-    application.add_handler(CallbackQueryHandler(confirm_changes, pattern="confirm_changes"))
-    application.add_handler(CallbackQueryHandler(discard_changes, pattern="discard_changes"))
-    application.add_handler(CallbackQueryHandler(finish_config, pattern="finish_config"))
-    application.add_handler(CallbackQueryHandler(confirm_availability, pattern="confirm_availability"))
-    application.add_handler(CallbackQueryHandler(cancel_availability, pattern="cancel_availability"))
-    application.add_handler(CallbackQueryHandler(discard_changes, pattern="discard_changes"))
     application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, multi_step_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_edit_action))
 
     # Webhook setzen und starten
     application.run_webhook(
