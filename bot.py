@@ -15,19 +15,14 @@ os.makedirs(LOCAL_DOWNLOAD_PATH, exist_ok=True)
 
 user_data = {}
 
-# Hilfsfunktion: FTP-Verbindung
-async def ftp_connect():
-    client = aioftp.Client()
-    await client.connect(FTP_HOST)
-    await client.login(FTP_USER, FTP_PASS)
-    await client.change_directory(FTP_UPLOAD_DIR)
-    return client
-
 # Hilfsfunktion: Datei auf FTP hochladen
-async def upload_to_ftp(local_path, new_name):
+async def upload_to_ftp(local_path, file_name):
     try:
-        client = await ftp_connect()
-        await client.upload(local_path, new_name)
+        client = aioftp.Client()
+        await client.connect(FTP_HOST)
+        await client.login(FTP_USER, FTP_PASS)
+        await client.change_directory(FTP_UPLOAD_DIR)
+        await client.upload(local_path)
         await client.quit()
         return True
     except Exception as e:
@@ -37,21 +32,30 @@ async def upload_to_ftp(local_path, new_name):
 # Hilfsfunktion: Dateien von FTP auflisten
 async def list_ftp_files():
     try:
-        client = await ftp_connect()
+        client = aioftp.Client()
+        await client.connect(FTP_HOST)
+        await client.login(FTP_USER, FTP_PASS)
+        
+        # Ändere das Verzeichnis auf den Zielpfad
+        await client.change_directory(FTP_UPLOAD_DIR)
+        
+        # Liste der Dateien abrufen
         files = []
         async for path, info in client.list(FTP_UPLOAD_DIR):
-            if info["type"] == "file":
+            if info["type"] == "file":  # Nur Dateien, keine Verzeichnisse
                 files.append(path.name)
+        
         await client.quit()
         return files
     except Exception as e:
         print(f"Fehler beim Abrufen der Dateien: {e}")
         return []
 
+
 # Start-Befehl
 async def start(update: Update, context):
     await update.message.reply_text(
-        "Hallo! Sende mir ein Bild, um es hochzuladen. Anschließend kannst du Titel, Material, Monat, Jahr und Verfügbarkeit festlegen. "
+        "Hallo! Sende mir ein Bild, um es hochzuladen. Anschließend kannst du Titel, Material, Datum und Maße festlegen. "
         "Verwende /help, um weitere Informationen zu erhalten."
     )
 
@@ -76,7 +80,6 @@ async def list_images(update: Update, context):
         for i, title in enumerate(titles)
     ]
 
-    context.user_data["files"] = files
     await update.message.reply_text(
         "📂 Verfügbare Bilder:",
         reply_markup=InlineKeyboardMarkup(keyboard)
@@ -90,10 +93,11 @@ async def show_image_options(update: Update, context):
 
     keyboard = [
         [InlineKeyboardButton("1. Titel ändern", callback_data="edit_title")],
-        [InlineKeyboardButton("2. Material ändern", callback_data="edit_material")],
-        [InlineKeyboardButton("3. Datum ändern", callback_data="edit_date")],
+        [InlineKeyboardButton("2. Datum ändern", callback_data="edit_date")],
+        [InlineKeyboardButton("3. Maße ändern", callback_data="edit_dimensions")],
         [InlineKeyboardButton("4. Verfügbarkeit ändern", callback_data="edit_availability")],
-        [InlineKeyboardButton("5. Fertig", callback_data="discard_changes")]
+        [InlineKeyboardButton("5. Startbild festlegen", callback_data="set_start")],
+        [InlineKeyboardButton("6. Löschen", callback_data="delete")]
     ]
 
     await query.edit_message_text(
@@ -101,117 +105,74 @@ async def show_image_options(update: Update, context):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# Foto-Handler
+# Upload eines Bildes
 async def photo_handler(update: Update, context):
     chat_id = update.message.chat.id
     status = await update.message.reply_text("📥 Herunterladen des Bildes...")
+
     try:
-        # Bild herunterladen und lokal speichern
         file = await update.message.photo[-1].get_file()
         local_path = os.path.join(LOCAL_DOWNLOAD_PATH, file.file_id + ".jpg")
         await file.download_to_drive(local_path)
 
-        # Speichere Bilddaten für den Benutzer
-        user_data[chat_id] = {
-            "file_path": local_path,
-            "file_name": file.file_id + ".jpg",
-            "step": "set_title",  # Startet mit der Titelabfrage
-        }
-
-        # Starte Multi-Step-Prozess
-        await status.edit_text("✅ Bild erfolgreich heruntergeladen. Bitte sende jetzt den Titel für das Bild:")
+        user_data[chat_id] = {"file_path": local_path, "file_name": file.file_id + ".jpg", "step": "title"}
+        await status.edit_text("✅ Bild hochgeladen! Bitte sende jetzt den Titel des Bildes.")
     except Exception as e:
-        print(f"Fehler beim Herunterladen: {e}")
-        await status.edit_text("❌ Fehler beim Herunterladen des Bildes.")
+        print(f"Fehler beim Upload: {e}")
+        await status.edit_text("❌ Fehler beim Hochladen des Bildes.")
 
-# Multi-Step-Handler
-async def multi_step_handler(update: Update, context):
+# Benutzerinformationen abfragen und Datei umbenennen
+async def text_handler(update: Update, context):
     chat_id = update.message.chat.id
-    file_data = user_data.get(chat_id)
-
-    if not file_data:
-        await update.message.reply_text("❌ Kein Bild ausgewählt. Bitte lade zuerst ein Bild hoch.")
+    if chat_id not in user_data:
+        await update.message.reply_text("Sende zuerst ein Bild, um fortzufahren.")
         return
 
-    # Bestimme den aktuellen Schritt
-    current_step = file_data.get("step", "set_title")  # Standardmäßig mit "set_title" starten
+    user_info = user_data[chat_id]
+    step = user_info.get("step")
+    local_path = user_info.get("file_path")
 
-    if current_step == "set_title":
-        # Speichere den Titel
-        file_data["title"] = update.message.text.strip()
-        file_data["step"] = "set_material"  # Weiter zum nächsten Schritt
-        await update.message.reply_text("✅ Titel gespeichert. Bitte sende jetzt das Material (z. B. Leinwand):")
+    if step == "title":
+        user_info["title"] = update.message.text.replace(" ", "_")
+        user_info["step"] = "date"
+        await update.message.reply_text("Titel gespeichert. Bitte sende das Datum im Format 'Monat Jahr'.")
+    elif step == "date":
+        try:
+            parts = update.message.text.split()
+            month = parts[0] if len(parts) > 1 else "None"
+            year = parts[-1]
+            user_info["month"] = month
+            user_info["year"] = year
+            user_info["step"] = "dimensions"
+            await update.message.reply_text("Datum gespeichert. Bitte sende die Maße im Format 'Breite x Höhe'.")
+        except ValueError:
+            await update.message.reply_text("Ungültiges Format. Bitte sende das Datum im Format 'Monat Jahr'.")
+    elif step == "dimensions":
+        user_info["dimensions"] = update.message.text.replace(" ", "")
+        user_info["step"] = None
 
-    elif current_step == "set_material":
-        # Speichere das Material
-        file_data["material"] = update.message.text.strip()
-        file_data["step"] = "select_month"  # Weiter zum nächsten Schritt
-        await update.message.reply_text("✅ Material gespeichert. Bitte wähle jetzt den Monat aus:", reply_markup=month_selection_keyboard())
+        # Neuer Dateiname erstellen
+        new_name = f"{user_info['title']}_{user_info['month']}_{user_info['year']}_{user_info['dimensions']}.jpg"
+        new_local_path = os.path.join(LOCAL_DOWNLOAD_PATH, new_name)
 
-    elif current_step == "select_month":
-        # Speichere den Monat
-        file_data["month"] = update.message.text.strip()
-        file_data["step"] = "set_year"  # Weiter zum nächsten Schritt
-        await update.message.reply_text("✅ Monat gespeichert. Bitte sende jetzt das Jahr (z. B. 2024):")
+        # Datei lokal umbenennen
+        os.rename(local_path, new_local_path)
 
-    elif current_step == "set_year":
-        # Speichere das Jahr
-        file_data["year"] = update.message.text.strip()
-        # Prüfen, ob alle Details ausgefüllt sind
-        if all(file_data.get(key) for key in ["title", "material", "month", "year"]):
-            # Neuen Dateinamen erstellen
-            new_name = f"{file_data['title']}_{file_data['material']}_{file_data['month']}-{file_data['year']}.jpg"
-            # Datei hochladen
-            if await upload_to_ftp(file_data["file_path"], new_name):
-                await update.message.reply_text(f"✅ Alle Details gespeichert und Bild hochgeladen: {new_name}")
-            else:
-                await update.message.reply_text("❌ Fehler beim Hochladen des Bildes.")
-            user_data.pop(chat_id)  # Daten für diesen Benutzer löschen
+        # Datei auf FTP hochladen
+        success = await upload_to_ftp(new_local_path, new_name)
+
+        if success:
+            await update.message.reply_text(f"✅ Datei erfolgreich hochgeladen: {new_name}")
         else:
-            await update.message.reply_text("❌ Es fehlen noch Informationen. Bitte starte erneut.")
+            await update.message.reply_text("❌ Fehler beim Hochladen der Datei.")
 
-    else:
-        await update.message.reply_text("❌ Unbekannter Schritt. Bitte starte erneut mit dem Hochladen eines Bildes.")
+        # Lokale Datei löschen
+        if os.path.exists(new_local_path):
+            os.remove(new_local_path)
+            print(f"🗑️ Datei lokal gelöscht: {new_local_path}")
 
-# Bearbeitungsfunktionen
-async def edit_title(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-    context.user_data["edit_action"] = "title"
-    await query.edit_message_text("Bitte sende den neuen Titel für das Bild:")
-
-async def edit_material(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-    context.user_data["edit_action"] = "material"
-    await query.edit_message_text("Bitte sende das neue Material für das Bild:")
-
-async def edit_date(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-    context.user_data["edit_action"] = "month"
-    await query.edit_message_text("Bitte wähle den neuen Monat für das Bild:", reply_markup=month_selection_keyboard())
-
-async def edit_availability(update: Update, context):
-    query = update.callback_query
-    await query.answer()
-    context.user_data["edit_action"] = "availability"
-    keyboard = [
-        [InlineKeyboardButton("Verfügbar", callback_data="set_available")],
-        [InlineKeyboardButton("Nicht verfügbar", callback_data="set_unavailable")],
-    ]
-    await query.edit_message_text("Bitte wähle die Verfügbarkeit aus:", reply_markup=InlineKeyboardMarkup(keyboard))
-
-# Hilfsfunktion: Monat-Auswahl-Tastatur
-def month_selection_keyboard():
-    months = [
-        "Januar", "Februar", "März", "April", "Mai", "Juni",
-        "Juli", "August", "September", "Oktober", "November", "Dezember"
-    ]
-    keyboard = [
-        [InlineKeyboardButton(month, callback_data=month) for month in months]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+        # Benutzerdaten entfernen
+        del user_data[chat_id]
 
 # Hauptfunktion
 def main():
@@ -222,12 +183,8 @@ def main():
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("list", list_images))
     application.add_handler(CallbackQueryHandler(show_image_options, pattern="select_"))
-    application.add_handler(CallbackQueryHandler(edit_title, pattern="edit_title"))
-    application.add_handler(CallbackQueryHandler(edit_material, pattern="edit_material"))
-    application.add_handler(CallbackQueryHandler(edit_date, pattern="edit_date"))
-    application.add_handler(CallbackQueryHandler(edit_availability, pattern="edit_availability"))
     application.add_handler(MessageHandler(filters.PHOTO, photo_handler))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, multi_step_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, text_handler))
 
     # Webhook setzen und starten
     application.run_webhook(
