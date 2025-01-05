@@ -343,9 +343,53 @@ async def discard_changes(update: Update, context):
 
 # Hauptmenü erneut anzeigen
 async def return_to_menu(update: Update, context):
+    """
+    Kehrt zurück zum Bildoptionen-Menü, nachdem eine Aktion abgeschlossen wurde.
+    Löscht vorherige Nachrichten, wenn möglich.
+    """
     query = update.callback_query
-    await query.answer()
-    await show_image_options(update, context)
+
+    # Wenn es eine CallbackQuery gibt, bestätigen wir die Aktion.
+    if query:
+        await query.answer()
+
+    # Nachricht löschen, wenn aus Text-Handler aufgerufen
+    if update.message:
+        try:
+            await update.message.delete()
+        except Exception as e:
+            print(f"Fehler beim Löschen der Nachricht: {e}")
+
+    selected_image_index = context.user_data.get("selected_image_index", None)
+    if selected_image_index is None:
+        await update.message.reply_text("Kein Bild ausgewählt. Bitte wähle ein Bild aus der Liste aus.")
+        return
+
+    # Hauptmenü anzeigen
+    keyboard = [
+        [InlineKeyboardButton("1. Titel ändern", callback_data="edit_title")],
+        [InlineKeyboardButton("2. Datum ändern", callback_data="edit_date")],
+        [InlineKeyboardButton("3. Maße ändern", callback_data="edit_dimensions")],
+        [InlineKeyboardButton("4. Material ändern", callback_data="edit_material")],
+        [InlineKeyboardButton("5. Verfügbarkeit ändern", callback_data="edit_availability")],
+        [InlineKeyboardButton("6. Startbild festlegen", callback_data="set_start")],
+        [InlineKeyboardButton("7. Löschen", callback_data="delete")],
+        [InlineKeyboardButton("8. Änderungen abschließen", callback_data="confirm_changes")],
+        [InlineKeyboardButton("9. Änderungen verwerfen", callback_data="discard_changes")]
+    ]
+
+    # Hauptmenü senden
+    if query:
+        await query.edit_message_text(
+            "Was möchtest du tun?",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    else:
+        await update.message.reply_text(
+            "Was möchtest du tun?",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+
 
 async def text_handler(update: Update, context):
     chat_id = update.message.chat.id
@@ -355,10 +399,34 @@ async def text_handler(update: Update, context):
         await update.message.reply_text("Es wurde keine Bearbeitungsaktion gestartet. Bitte wähle zuerst eine Option aus dem Menü.")
         return
 
+    # Nachricht löschen (falls möglich)
+    try:
+        await update.message.delete()
+    except Exception as e:
+        print(f"Fehler beim Löschen der Nachricht: {e}")
+
     if edit_action == "title":
         new_title = update.message.text.strip()
-        # Hier die Logik für das Ändern des Titels implementieren
+        # Logik zum Speichern des neuen Titels hier hinzufügen
         await update.message.reply_text(f"Titel geändert zu: {new_title}.")
+        context.user_data["edit_action"] = None  # Aktion abschließen
+        await return_to_menu(update, context)
+
+    elif edit_action == "material":
+        new_material = update.message.text.strip()
+        # Logik zum Speichern des neuen Materials hier hinzufügen
+        await update.message.reply_text(f"Material geändert zu: {new_material}.")
+        context.user_data["edit_action"] = None  # Aktion abschließen
+        await return_to_menu(update, context)
+
+    elif edit_action == "dimensions":
+        new_dimensions = update.message.text.strip()
+        if "x" not in new_dimensions:
+            await update.message.reply_text("Ungültiges Format. Bitte sende die Maße im Format 'Breite x Höhe'.")
+            return
+
+        # Logik zum Speichern der neuen Maße hier hinzufügen
+        await update.message.reply_text(f"Maße geändert zu: {new_dimensions}.")
         context.user_data["edit_action"] = None  # Aktion abschließen
         await return_to_menu(update, context)
 
@@ -369,27 +437,9 @@ async def text_handler(update: Update, context):
         context.user_data["edit_action"] = None  # Aktion abschließen
         await return_to_menu(update, context)
 
-    elif edit_action == "material":
-        new_material = update.message.text.strip()
-        # Hier die Logik für das Ändern des Materials implementieren
-        await update.message.reply_text(f"Material geändert zu: {new_material}.")
-        context.user_data["edit_action"] = None  # Aktion abschließen
-        await return_to_menu(update, context)
-
-    elif edit_action == "dimensions":
-        new_dimensions = update.message.text.strip()
-        # Überprüfen, ob das Format korrekt ist
-        if "x" not in new_dimensions:
-            await update.message.reply_text("Ungültiges Format. Bitte sende die Maße im Format 'Breite x Höhe'.")
-            return
-
-        # Hier die Logik für das Ändern der Maße implementieren
-        await update.message.reply_text(f"Maße geändert zu: {new_dimensions}.")
-        context.user_data["edit_action"] = None  # Aktion abschließen
-        await return_to_menu(update, context)
-
     else:
         await update.message.reply_text("Unbekannte Aktion. Bitte wähle erneut aus dem Menü.")
+
 
 
 # Hauptfunktion
