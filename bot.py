@@ -4,7 +4,8 @@ from dotenv import load_dotenv
 import argparse
 import aioftp
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters, CallbackContext
+from telegram.ext import Application,CommandHandler, MessageHandler, CallbackQueryHandler, filters, CallbackContext
+from telegram.ext.filters import User
 
 if os.path.exists(".env"):
     load_dotenv(".env")
@@ -16,12 +17,21 @@ FTP_HOST = os.getenv("FTP_HOST")
 FTP_USER = os.getenv("FTP_USER")
 FTP_PASS = os.getenv("FTP_PASS")
 LOCAL_DOWNLOAD_PATH = "./downloads/"
+ADMINISTRATOR_IDS = [int(i) for i in os.getenv("ADMINISTRATOR_IDS").split(",")]
+
+
 
 os.makedirs(LOCAL_DOWNLOAD_PATH, exist_ok=True)
 
 user_data = {}
 ftp_client = None
 inactivity_timer = None
+
+
+
+async def start(update: Update, context):
+    await context.bot.send_message(chat_id=update.effective_chat.id, text="Wow! Admin found!")
+
 
 # Argumente parsen
 def parse_args():
@@ -193,12 +203,27 @@ async def change_material(update: Update, context: CallbackContext):
     context.user_data["edit_action"] = "change_material"
     await query.edit_message_text("Bitte sende das neue Material für das Bild:")
 
-# Kommando zum Ändern des Datums
 async def change_date(update: Update, context: CallbackContext):
     query = update.callback_query
     await query.answer()
+
+    # Aktion setzen
     context.user_data["edit_action"] = "change_date"
-    await query.edit_message_text("Bitte sende das neue Datum im Format 'Monat Jahr':")
+
+    # Monatsauswahl anzeigen
+    keyboard = [
+        [InlineKeyboardButton("Kein Monat angeben", callback_data="none")],
+        [InlineKeyboardButton("Januar", callback_data="Januar"), InlineKeyboardButton("Februar", callback_data="Februar"), InlineKeyboardButton("März", callback_data="März")],
+        [InlineKeyboardButton("April", callback_data="April"), InlineKeyboardButton("Mai", callback_data="Mai"), InlineKeyboardButton("Juni", callback_data="Juni")],
+        [InlineKeyboardButton("Juli", callback_data="Juli"), InlineKeyboardButton("August", callback_data="August"), InlineKeyboardButton("September", callback_data="September")],
+        [InlineKeyboardButton("Oktober", callback_data="Oktober"), InlineKeyboardButton("November", callback_data="November"), InlineKeyboardButton("Dezember", callback_data="Dezember")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await query.edit_message_text("Bitte wähle den Monat aus:", reply_markup=reply_markup)
+
+
+        
+
 
 # Kommando zum Ändern der Verfügbarkeit
 async def change_availability(update: Update, context: CallbackContext):
@@ -305,7 +330,8 @@ async def confirm(update: Update, context: CallbackContext):
         parts = selected_image_name.rsplit(".", maxsplit=1)
         if len(parts) == 2:
             name, extension = parts
-            if "_x." or "_x_" in name:
+            if "_x." in name or "_x_" in name:
+                print(name)
                 name = name.replace("_x", "_x_S")
             else:
                 name += "_S"
@@ -329,7 +355,7 @@ async def receive_photo(update: Update, context: CallbackContext):
     file = await context.bot.get_file(photo.file_id)
 
     # Dynamische Erkennung der Dateiendung
-    file_extension = os.path.splitext(file.file_path)[-1] or ".jpg"
+    file_extension = os.path.splitext(file.file_path)[-1]
     file_path = os.path.join(LOCAL_DOWNLOAD_PATH, f"{photo.file_id}{file_extension}")
     
     await file.download_to_drive(file_path)
@@ -359,8 +385,19 @@ async def photo_upload_dialog(update: Update, context: CallbackContext):
 
     elif upload_step == "material":
         context.user_data["material"] = update.message.text.strip()
+        context.user_data["upload_step"] = "month"
+        #wähle monat oder keinen monat auswählen aus inline keyboard
+        keyboard = [
+            [InlineKeyboardButton("Kein Monat angeben", callback_data="none")],
+            [InlineKeyboardButton("Januar", callback_data="Januar"), InlineKeyboardButton("Februar", callback_data="Februar"), InlineKeyboardButton("März", callback_data="März")],
+            [InlineKeyboardButton("April", callback_data="April"), InlineKeyboardButton("Mai", callback_data="Mai"), InlineKeyboardButton("Juni", callback_data="Juni")],
+            [InlineKeyboardButton("Juli", callback_data="Juli"), InlineKeyboardButton("August", callback_data="August"), InlineKeyboardButton("September", callback_data="September")],
+            [InlineKeyboardButton("Oktober", callback_data="Oktober"), InlineKeyboardButton("November", callback_data="November"), InlineKeyboardButton("Dezember", callback_data="Dezember")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
         context.user_data["upload_step"] = "year"
-        await update.message.reply_text("Bitte gib das Jahr ein (z. B. Mai 2025):")
+        await update.message.reply_text("Bitte wähle den Monat aus:", reply_markup=reply_markup)
+
 
     elif upload_step == "year":
         #next is dimensions
@@ -388,6 +425,7 @@ async def photo_upload_dialog(update: Update, context: CallbackContext):
         context.user_data.pop("title", None)
         context.user_data.pop("material", None)
         context.user_data.pop("year", None)
+        context.user_data.pop("selected_month", None)
 
 # Foto hochladen
 async def upload_photo(update: Update, context: CallbackContext):
@@ -395,11 +433,12 @@ async def upload_photo(update: Update, context: CallbackContext):
     file_extension = context.user_data.get("current_file_extension", ".jpg")
     title = context.user_data.get("title").replace(" ", "-")
     material = context.user_data.get("material").replace(" ", "-")
+    month = context.user_data.get("selected_month")
     year = context.user_data.get("year").replace(" ", "-")
     dimensions = update.message.text.strip().replace("x", "-")
     
     # Erstelle den Dateinamen
-    filename = f"{title}_{material}_{year}_{dimensions}{file_extension}"
+    filename = f"{title}_{material}_{month}-{year}_{dimensions}{file_extension}"
     #rename file
     new_local_path = os.path.join(LOCAL_DOWNLOAD_PATH, filename)
     if os.path.exists(local_path):
@@ -424,6 +463,17 @@ async def upload_photo(update: Update, context: CallbackContext):
     context.user_data.pop("material", None)
     context.user_data.pop("year", None)
 
+async def handle_month_selection(update: Update, context: CallbackContext):
+    query = update.callback_query
+    await query.answer()
+
+    # Speichere den ausgewählten Monat
+    selected_month = query.data
+    context.user_data["selected_month"] = selected_month
+
+    # Fordere den Nutzer auf, das Jahr einzugeben
+    await query.edit_message_text("Bitte gib das Jahr ein (z. B. 2025):")
+    context.user_data["awaiting_year"] = True
 # Multi-Step-Handler für Benutzerinteraktionen
 async def multi_step_handler(update: Update, context: CallbackContext):
     chat_id = update.message.chat.id
@@ -463,8 +513,44 @@ async def multi_step_handler(update: Update, context: CallbackContext):
         parts[1] = new_material
 
     elif edit_action == "change_date":
-        new_date = update.message.text.strip().replace(" ", "-")
+        # Prüfe, ob der Monat bereits gesetzt ist
+        if "selected_month" not in context.user_data:
+            await update.message.reply_text("❌ Kein Monat gewählt. Bitte starte die Aktion erneut.")
+            context.user_data["edit_action"] = None  # Aktion zurücksetzen
+            return
+
+        # Hole den Monat aus context.user_data
+        selected_month = context.user_data["selected_month"].strip()
+
+        # Prüfe, ob das Jahr bereits erwartet wird
+        if "awaiting_year" not in context.user_data:
+            # Fordere den Nutzer auf, das Jahr einzugeben
+            await update.message.reply_text("Bitte gib das Jahr ein (z. B. 2025):")
+            context.user_data["awaiting_year"] = True
+            return
+
+        # Verarbeite die Jahreingabe
+        year = update.message.text.strip()
+        if not year.isdigit():
+            await update.message.reply_text("❌ Ungültiges Jahr. Bitte gib ein gültiges Jahr ein.")
+            return
+
+        # Jahr speichern und vollständiges Datum erstellen
+        selected_year = year
+        new_date = f"{selected_month}-{selected_year}" if selected_month != "none" else selected_year
+
+        # Aktualisiere die Teile des Dateinamens
         parts[2] = new_date
+
+        # Feedback an den Nutzer
+        await update.message.reply_text(f"Datum erfolgreich geändert: {new_date}")
+
+        # Kontext zurücksetzen
+        context.user_data["edit_action"] = None
+        context.user_data.pop("awaiting_year", None)
+        context.user_data.pop("selected_month", None)
+
+
 
     elif edit_action == "change_availability":
         # Die Verfügbarkeit wird hier geändert, indem der entsprechende CallbackQueryHandler aufgerufen wird.
@@ -515,12 +601,16 @@ def main():
 
     application = Application.builder().token(BOT_TOKEN).build()
 
+
+
     # Handler für Start- und Hilfekommandos
+# Handler für Start- und Hilfekommandos
+
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
 
     # Handler für das Auflisten von Bildern und das Anzeigen von Bildoptionen
-    application.add_handler(CommandHandler("list", list_images))
+    application.add_handler(CommandHandler("list", list_images,filters=User(ADMINISTRATOR_IDS)))
     application.add_handler(CallbackQueryHandler(show_image_options, pattern="select_"))
 
     # Handler für Bearbeitungsaktionen
@@ -532,16 +622,20 @@ def main():
     application.add_handler(CallbackQueryHandler(set_start_image, pattern="set_start_image"))
     application.add_handler(CallbackQueryHandler(delete_image, pattern="delete"))
 
+#   handle
+    application.add_handler(CallbackQueryHandler(handle_month_selection, pattern="Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember|none"))
+
     # Handler für die Verfügbarkeit
     application.add_handler(CallbackQueryHandler(set_availability, pattern="set_available|set_unavailable"))
 
     # Handler für den Multi-Step-Prozess
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, multi_step_handler))
-    application.add_handler(MessageHandler(filters.PHOTO, receive_photo))
+    application.add_handler(MessageHandler(filters.PHOTO & User(ADMINISTRATOR_IDS), receive_photo))
 
     # Bestätigungs- und Abbruch-Handler
     application.add_handler(CommandHandler("confirm", confirm))
     application.add_handler(CommandHandler("cancel", cancel))
+    # admin handler
 
     # Webhook oder Polling Modus basierend auf der USAGE-Umgebungsvariablen
     if args.local:
