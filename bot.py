@@ -3,6 +3,7 @@ import asyncio
 from dotenv import load_dotenv
 import argparse
 import aioftp
+import urllib.parse
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application,CommandHandler, MessageHandler, CallbackQueryHandler, filters, CallbackContext
 from telegram.ext.filters import User
@@ -28,6 +29,11 @@ ftp_client = None
 inactivity_timer = None
 
 
+def encode_title(title):
+    # Ersetze Leerzeichen durch Bindestriche
+    title = title.replace(" ", "-")
+    # URL-encode den Titel, um Sonderzeichen zu kodieren
+    return urllib.parse.quote(title)
 
 async def start(update: Update, context):
     await context.bot.send_message(chat_id=update.effective_chat.id, text="Wow! Admin found!")
@@ -138,6 +144,18 @@ async def start(update: Update, context: CallbackContext):
         "Hallo! Sende mir ein Bild, um es hochzuladen. Anschließend kannst du Titel, Material, Datum und Maße festlegen. "
         "Verwende /help, um weitere Informationen zu erhalten."
     )
+async def discard_changes(update: Update, context: CallbackContext):
+    # Entferne das Inline-Keyboard
+    await update.callback_query.edit_message_reply_markup(reply_markup=None)
+    
+    # Setze den Kontext zurück
+    context.user_data.clear()
+    
+    # Informiere den Benutzer, dass die Änderungen verworfen wurden
+    await update.callback_query.answer("Bearbeitungsaktion wurde abgeschlossen")
+    await update.callback_query.message.reply_text("Bearbeitungsaktion wurde abgeschlossen")
+    
+
 
 # Hilfe-Befehl
 async def help_command(update: Update, context: CallbackContext):
@@ -165,10 +183,13 @@ async def list_images(update: Update, context: CallbackContext):
     await update.message.reply_text(
         "📂 Verfügbare Bilder:",
         reply_markup=InlineKeyboardMarkup(keyboard)
+        #after selecting image close the keyboard with list of images
+
     )
 
 # Bildoptionen anzeigen
 async def show_image_options(update: Update, context: CallbackContext):
+    await update.callback_query.message.edit_reply_markup(reply_markup=None)
     query = update.callback_query
     index = int(query.data.split("_")[1])
     context.user_data["selected_image_index"] = index
@@ -184,10 +205,8 @@ async def show_image_options(update: Update, context: CallbackContext):
         [InlineKeyboardButton("8. Fertig", callback_data="discard_changes")]
     ]
 
-    await query.edit_message_text(
-        "Was möchtest du tun?",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.callback_query.message.reply_text("Bitte wähle eine Bearbeitungsoption:", reply_markup=reply_markup)
 
 # Kommando zum Ändern des Titels
 async def change_title(update: Update, context: CallbackContext):
@@ -369,7 +388,6 @@ async def receive_photo(update: Update, context: CallbackContext):
 
 # Dialog zur Eingabe der Foto-Metadaten
 async def photo_upload_dialog(update: Update, context: CallbackContext):
-
     if not context.user_data.get("photo_upload"):
         return  # Kein aktiver Foto-Upload → Ignoriere Eingaben
     upload_step = context.user_data.get("upload_step")
@@ -379,14 +397,22 @@ async def photo_upload_dialog(update: Update, context: CallbackContext):
         return
 
     if upload_step == "title":
-        context.user_data["title"] = update.message.text.strip()
+        title = update.message.text.strip()
+        if "-" in title or "_" in title:
+            await update.message.reply_text("❌ Fehler: Titel darf keine Bindestriche oder Unterstriche enthalten. Bitte versuche es erneut.")
+            return
+        context.user_data["title"] = encode_title(title)  # Kodierung hier anwenden
         context.user_data["upload_step"] = "material"
         await update.message.reply_text("Bitte gib das Material ein:")
 
     elif upload_step == "material":
-        context.user_data["material"] = update.message.text.strip()
+        material = update.message.text.strip()
+        if not material.isalpha() or "-" in material or "_" in material:
+            await update.message.reply_text("❌ Fehler: Material darf nur alphabetische Zeichen enthalten und keine Bindestriche oder Unterstriche. Bitte versuche es erneut.")
+            return
+        context.user_data["material"] = material
         context.user_data["upload_step"] = "month"
-        #wähle monat oder keinen monat auswählen aus inline keyboard
+        # wähle Monat oder keinen Monat auswählen aus Inline-Keyboard
         keyboard = [
             [InlineKeyboardButton("Kein Monat angeben", callback_data="none")],
             [InlineKeyboardButton("Januar", callback_data="Januar"), InlineKeyboardButton("Februar", callback_data="Februar"), InlineKeyboardButton("März", callback_data="März")],
@@ -395,28 +421,24 @@ async def photo_upload_dialog(update: Update, context: CallbackContext):
             [InlineKeyboardButton("Oktober", callback_data="Oktober"), InlineKeyboardButton("November", callback_data="November"), InlineKeyboardButton("Dezember", callback_data="Dezember")]
         ]
         reply_markup = InlineKeyboardMarkup(keyboard)
-        context.user_data["upload_step"] = "year"
         await update.message.reply_text("Bitte wähle den Monat aus:", reply_markup=reply_markup)
 
-
     elif upload_step == "year":
-        #next is dimensions
-        context.user_data["year"] = update.message.text.strip()
+        year = update.message.text.strip()
+        if not year.isdigit() or len(year) != 4:
+            await update.message.reply_text("❌ Fehler: Jahr muss eine vierstellige Zahl sein. Bitte versuche es erneut.")
+            return
+        context.user_data["year"] = year
         context.user_data["upload_step"] = "dimensions"
-        await update.message.reply_text("Bitte gib die Maße im Format 'Breite x Höhe' ein:")
+        await update.message.reply_text("Bitte gib die Maße im Format 'BreitexHöhe' ein:")
 
     elif upload_step == "dimensions":
-        #check if dimensions are in correct format
-        dimensions = update.message.text.strip()
-        if "x" not in dimensions:
-            await update.message.reply_text("❌ Fehler: Maße müssen im Format 'Breite x Höhe' sein. Bitte versuche es erneut.")
-            #repeat context for dimensions
-            context.user_data["upload_step"] = "dimensions"
+        dimensions = update.message.text.strip().replace(" ", "")
+        if "x" not in dimensions or not all(part.isdigit() for part in dimensions.split("x")) or "-" in dimensions or "_" in dimensions:
+            await update.message.reply_text("❌ Fehler: Maße müssen im Format 'BreitexHöhe' sein und dürfen keine Bindestriche oder Unterstriche enthalten. Bitte versuche es erneut.")
             return
-        #upload photo
+        context.user_data["dimensions"] = dimensions
         await upload_photo(update, context)
-
-
 
         # Upload-Schritte abschließen
         context.user_data.pop("upload_step", None)
@@ -425,7 +447,7 @@ async def photo_upload_dialog(update: Update, context: CallbackContext):
         context.user_data.pop("title", None)
         context.user_data.pop("material", None)
         context.user_data.pop("year", None)
-        context.user_data.pop("selected_month", None)
+        context.user_data.pop("selected_month", None).pop("selected_month", None)
 
 # Foto hochladen
 async def upload_photo(update: Update, context: CallbackContext):
@@ -477,7 +499,7 @@ async def handle_month_selection(update: Update, context: CallbackContext):
 # Multi-Step-Handler für Benutzerinteraktionen
 async def multi_step_handler(update: Update, context: CallbackContext):
     chat_id = update.message.chat.id
-    #if photo upload running then dont interrupt
+    # if photo upload running then dont interrupt
     if context.user_data.get("photo_upload"):
         await photo_upload_dialog(update, context)
         return
@@ -502,13 +524,16 @@ async def multi_step_handler(update: Update, context: CallbackContext):
     parts[-1] = parts[-1].rsplit(".", maxsplit=1)[0]
 
     if edit_action == "change_title":
-        new_title = update.message.text.strip().replace(" ", "-")
-        parts[0] = new_title
+        new_title = update.message.text.strip()
+        if "-" in new_title or "_" in new_title:
+            await update.message.reply_text("❌ Fehler: Titel darf keine Bindestriche oder Unterstriche enthalten. Bitte versuche es erneut.")
+            return
+        parts[0] = encode_title(new_title)
 
     elif edit_action == "change_material":
         new_material = update.message.text.strip()
-        if len(new_material.split()) > 1:
-            await update.message.reply_text("❌ Fehler: Material kann nur ein Wort sein.")
+        if not new_material.isalpha() or "-" in new_material or "_" in new_material:
+            await update.message.reply_text("❌ Fehler: Material darf nur alphabetische Zeichen enthalten und keine Bindestriche oder Unterstriche. Bitte versuche es erneut.")
             return
         parts[1] = new_material
 
@@ -531,7 +556,7 @@ async def multi_step_handler(update: Update, context: CallbackContext):
 
         # Verarbeite die Jahreingabe
         year = update.message.text.strip()
-        if not year.isdigit():
+        if not year.isdigit() or len(year) != 4:
             await update.message.reply_text("❌ Ungültiges Jahr. Bitte gib ein gültiges Jahr ein.")
             return
 
@@ -550,14 +575,11 @@ async def multi_step_handler(update: Update, context: CallbackContext):
         context.user_data.pop("awaiting_year", None)
         context.user_data.pop("selected_month", None)
 
-
-
-    elif edit_action == "change_availability":
-        # Die Verfügbarkeit wird hier geändert, indem der entsprechende CallbackQueryHandler aufgerufen wird.
-        pass
-
     elif edit_action == "change_dimensions":
-        new_dimensions = update.message.text.strip().replace("x", "-")
+        new_dimensions = update.message.text.strip().replace(" ", "")
+        if "x" not in new_dimensions or not all(part.isdigit() for part in new_dimensions.split("x")) or "-" in new_dimensions or "_" in new_dimensions:
+            await update.message.reply_text("❌ Fehler: Maße müssen im Format 'BreitexHöhe' sein und dürfen keine Bindestriche oder Unterstriche enthalten. Bitte versuche es erneut.")
+            return
         parts[3] = new_dimensions
 
     elif edit_action == "set_start_image":
@@ -578,23 +600,45 @@ async def multi_step_handler(update: Update, context: CallbackContext):
             await update.message.reply_text(f"Bild {selected_image_name} erfolgreich gelöscht.")
         else:
             await update.message.reply_text(f"Fehler beim Löschen des Bildes {selected_image_name}.")
-        context.user_data[chat_id] = None  # Aktion abschließen
-        return
+          # Aktion abschließen
+        
+        
+    elif edit_action == "discard_changes":
+        context.user_data[chat_id] = None  # Aktion abschließen und Kontext zurücksetzen
+        await update.message.reply_text("Bearbetung abgeschlossen.")
+
+        
 
     else:
         await update.message.reply_text("❌ Unbekannte Bearbeitungsaktion.")
         context.user_data[chat_id] = None  # Aktion abschließen
-        return
+        
+        
 
     # Neuen Dateinamen zusammensetzen und Dateiendung wieder hinzufügen
     new_name = "_".join(parts) + "." + file_extension
     if await rename_ftp_file(selected_image_name, new_name):
         await update.message.reply_text(f"Aktion erfolgreich durchgeführt: {new_name}.")
+        query = update.callback_query
+        if query:
+            await show_image_options(update, context)
+        else:
+            keyboard = [
+                [InlineKeyboardButton("1. Titel ändern", callback_data="edit_title")],
+                [InlineKeyboardButton("2. Material ändern", callback_data="edit_material")],
+                [InlineKeyboardButton("3. Datum ändern", callback_data="edit_date")],
+                [InlineKeyboardButton("4. Maße ändern", callback_data="edit_dimensions")],
+                [InlineKeyboardButton("5. Verfügbarkeit ändern", callback_data="edit_availability")],
+                [InlineKeyboardButton("6. Löschen", callback_data="delete")],
+                [InlineKeyboardButton("7. Startbild festlegen", callback_data="set_start_image")],
+                [InlineKeyboardButton("8. Fertig", callback_data="discard_changes")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await update.message.reply_text("Bitte wähle eine Bearbeitungsoption:", reply_markup=reply_markup)
     else:
         await update.message.reply_text("❌ Fehler bei der Durchführung der Aktion.")
-   #clear context data
-    context.user_data[chat_id] = None
-
+    # clear context data
+        context.user_data[chat_id] = None
 
 def main():
     args = parse_args()
@@ -621,6 +665,7 @@ def main():
     application.add_handler(CallbackQueryHandler(change_dimensions, pattern="edit_dimensions"))
     application.add_handler(CallbackQueryHandler(set_start_image, pattern="set_start_image"))
     application.add_handler(CallbackQueryHandler(delete_image, pattern="delete"))
+    application.add_handler(CallbackQueryHandler(discard_changes, pattern="discard_changes"))
 
 #   handle
     application.add_handler(CallbackQueryHandler(handle_month_selection, pattern="Januar|Februar|März|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember|none"))
