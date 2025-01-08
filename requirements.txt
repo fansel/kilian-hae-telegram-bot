@@ -3,3 +3,4 @@ python-telegram-bot[webhooks]
 aioftp
 fastapi
 uvicorn
+pillow
